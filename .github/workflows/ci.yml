@@ -1,19 +1,218 @@
 name: CI
 
 on:
-  push:
-    branches: [main]
   pull_request:
+
+permissions:
+  contents: write
 
 jobs:
   build:
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: standalone-map-sources
+            ref: 6972121d479a7d68709a51dfa7dcc81012d8d0f4
+            tests: 177
+          - name: all-features
+            ref: 67fbcf97bfcfe4a9e685afb5419f4a346be5519f
+            tests: 241
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ matrix.ref }}
+          fetch-depth: 0
       - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
           cache: pnpm
-      - run: pnpm install --frozen-lockfile
-      - run: pnpm check
+      - name: Full check
+        shell: bash
+        run: |
+          set -o pipefail
+          pnpm install --frozen-lockfile
+          pnpm check 2>&1 | tee check.log
+      - name: Package tested candidate
+        shell: python
+        env:
+          CANDIDATE: ${{ matrix.ref }}
+          EXPECTED_TESTS: ${{ matrix.tests }}
+          BUILD_KIND: ${{ matrix.name }}
+        run: |
+          from pathlib import Path
+          import hashlib, json, os, re, shutil, subprocess
+          def git(*args):
+              return subprocess.check_output(["git", *args], text=True)
+          candidate = os.environ["CANDIDATE"]
+          assert git("rev-parse", "HEAD").strip() == candidate
+          tests = int(os.environ["EXPECTED_TESTS"])
+          log = re.sub(r"\x1b\[[0-9;]*m", "", Path("check.log").read_text())
+          assert re.search(r"Tests\s+" + str(tests) + r" passed", log), "Unexpected unit test result"
+          root = Path("test-package")
+          plugin = root / "wayfarer"
+          plugin.mkdir(parents=True)
+          for name in ["main.js", "manifest.json", "styles.css"]:
+              shutil.copy2(name, plugin / name)
+          assert json.loads((plugin / "manifest.json").read_text())["id"] == "wayfarer"
+          for name in ["LICENSE", "check.log"]:
+              shutil.copy2(name, root / name)
+          for source in Path("docs").rglob("*.md"):
+              dest = root / "documentation" / source.relative_to("docs")
+              dest.parent.mkdir(parents=True, exist_ok=True)
+              shutil.copy2(source, dest)
+          shutil.copytree("skills", root / "planning-instructions")
+          upstream = "238332f6c910e9153e22cd7fda5b62380369140a"
+          (root / "combined-from-upstream.diff").write_text(git("diff", upstream, candidate), encoding="utf-8")
+          for name, start, end in [
+              ("geo", upstream, "7327b2f9fe0b41dc5f7c81e5750fd09ed4b595f4"),
+              ("session-metadata", "7327b2f9fe0b41dc5f7c81e5750fd09ed4b595f4", "d7c393a6bbc368b8cef55a7b41e83cc9eacdb479"),
+              ("overview", upstream, "dd5c438de7bc4cb27988286e6aea967fab8a6173"),
+              ("card-description", upstream, "6494c07e7bbfed12c11cc7d826c89418353d8eda"),
+              ("map-sources", upstream, "6972121d479a7d68709a51dfa7dcc81012d8d0f4"),
+          ]:
+              if os.environ["BUILD_KIND"] == "all-features" or name == "map-sources":
+                  git("format-patch", "--output-directory", str(root / "patches" / name), start + ".." + end)
+          info = {
+              "source_commit": candidate,
+              "source_tree": git("rev-parse", "HEAD^{tree}").strip(),
+              "upstream": upstream,
+              "map_sources": "6972121d479a7d68709a51dfa7dcc81012d8d0f4",
+              "kind": os.environ["BUILD_KIND"],
+              "validation": "Full pnpm check in GitHub Actions; host/network mocked in bundle smoke",
+              "unit_tests": tests,
+              "physical_android_tested": False,
+              "screenshots_and_native_report": "Pending recovery of the interrupted execution environment",
+              "sha256": {p.name: hashlib.sha256(p.read_bytes()).hexdigest() for p in sorted(plugin.iterdir())},
+          }
+          (root / "BUILD-INFO.json").write_text(json.dumps(info, indent=2) + "\n", encoding="utf-8")
+          (root / "README.md").write_text("""# Wayfarer Fork – Testpaket, 27.11.2026
+
+          Der Gesamtbuild enthält die bisherigen Geo-/Google-Links, optionale
+          Sitzungsmetadaten, die Reiseübersicht mit Reading-Navigation, den
+          kosmetischen Kartenfix und jetzt mehrere Kartenhintergründe.
+          Die Standalone-Ausgabe enthält nur das unabhängige Kartenquellen-Feature.
+
+          ## Installation
+
+          Wayfarer deaktivieren. Die drei Dateien aus wayfarer/ in den vorhandenen
+          Ordner .obsidian/plugins/wayfarer/ kopieren. Vorhandene data.json behalten,
+          danach Wayfarer wieder aktivieren. ID wayfarer und Version 0.1.14 bleiben
+          unverändert; ein offizielles Update kann den Testbuild ersetzen.
+
+          ## Kartenquellen
+
+          Einstellungen → Wayfarer → Advanced → Map sources → Manage map sources.
+          Weitere Quellen hinzufügen und Save wählen. Mit mindestens zwei gültigen
+          Quellen erscheint rechts auf der Karte der native Leaflet-Umschalter.
+          OpenStreetMap und bestehende benutzerdefinierte Tile-URLs bleiben erhalten.
+          Nur die zuletzt ausgewählte Quellen-ID wird gerätelokal gemerkt.
+          Tile-URLs samt API-Keys stehen in den Plugin-Einstellungen und können
+          mit deren data.json synchronisiert werden. Notizen werden nicht geändert.
+
+          ## Testumfang
+
+          Der genaue Quell-Commit, Testzahl, Prüfsummen und das vollständige
+          pnpm-check-Protokoll liegen bei. Die ursprüngliche Standalone-Umsetzung
+          bestand zusätzlich 30 Prüfungen im offiziellen Obsidian-1.15.1-Renderer
+          einschließlich einer schmalen Touch-Ansicht. Screenshots und Rohprotokoll
+          konnten wegen Ausfall der lokalen Arbeitsumgebung noch nicht übernommen
+          werden. Dies ist kein physischer Android-Test. Android, echte private
+          Tile-Server und bezahlte/keygebundene Anbieter bleiben manuell zu prüfen.
+
+          Die Navigation im Lesemodus zeigt die Zielzeile oben; Editorsprünge zu
+          Orten bleiben zentriert. Das bestehende Verhalten wurde nicht verändert.
+          """, encoding="utf-8")
+          files = sorted(p for p in root.rglob("*") if p.is_file())
+          (root / "SHA256SUMS").write_text("\n".join(hashlib.sha256(p.read_bytes()).hexdigest() + "  " + p.relative_to(root).as_posix() for p in files) + "\n", encoding="utf-8")
+          print(json.dumps(info))
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Wayfarer-${{ matrix.name }}-2026-11-27
+          path: test-package/
+          if-no-files-found: error
+
+  native:
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      NATIVE_DEPS: ${{ runner.temp }}/native-deps
+      UI_OUTPUT: ${{ runner.temp }}/native-results
+      OBSIDIAN_BIN: ${{ runner.temp }}/obsidian-desktop/obsidian-1.15.1/obsidian
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: pnpm
+      - name: Prepare official desktop renderer
+        shell: bash
+        run: |
+          set -euo pipefail
+          pnpm install --frozen-lockfile
+          npm install --prefix "$NATIVE_DEPS" --no-save playwright@1.56.1
+          sudo apt-get update -qq
+          sudo apt-get install -y libgtk-3-0t64 libnss3 libasound2t64 libgbm1 libxss1
+          mkdir -p "$RUNNER_TEMP/obsidian-desktop" "$UI_OUTPUT"
+          curl -fLsS --retry 2 https://github.com/obsidianmd/obsidian-releases/releases/download/v1.15.1/obsidian-1.15.1.tar.gz -o "$RUNNER_TEMP/obsidian.tar.gz"
+          tar -xzf "$RUNNER_TEMP/obsidian.tar.gz" -C "$RUNNER_TEMP/obsidian-desktop"
+      - name: Native source switching and upstream teardown comparison
+        shell: bash
+        run: |
+          set -euo pipefail
+          for entry in standalone:6972121d479a7d68709a51dfa7dcc81012d8d0f4 all-features:67fbcf97bfcfe4a9e685afb5419f4a346be5519f baseline:238332f6c910e9153e22cd7fda5b62380369140a; do
+            name="${entry%%:*}"
+            ref="${entry#*:}"
+            source_dir="$RUNNER_TEMP/native-source-$name"
+            git worktree add --detach "$source_dir" "$ref"
+            ln -s "$GITHUB_WORKSPACE/node_modules" "$source_dir/node_modules"
+            pnpm --dir "$source_dir" build > "$UI_OUTPUT/build-$name.log" 2>&1
+            if [ "$name" != baseline ]; then
+              node .github/native-map-sources.mjs "$source_dir" "$name" 2>&1 | tee "$UI_OUTPUT/$name.log"
+            fi
+          done
+          node .github/native-map-sources.mjs "$RUNNER_TEMP/native-source-baseline" baseline-close 2>&1 | tee "$UI_OUTPUT/baseline-close.log"
+          node .github/native-map-sources.mjs "$RUNNER_TEMP/native-source-standalone" feature-close 2>&1 | tee "$UI_OUTPUT/feature-close.log"
+          python3 - <<'PY'
+          import json,os
+          from pathlib import Path
+          root=Path(os.environ["UI_OUTPUT"])
+          before=json.loads((root/"baseline-close/result.json").read_text())
+          after=json.loads((root/"feature-close/result.json").read_text())
+          assert not after["pageErrors"] or before["pageErrors"], "Teardown error appears only with the feature"
+          report={"baseline":before,"feature":after,"both_report_pending_zoom_error":bool(before["pageErrors"] and after["pageErrors"])}
+          (root/"teardown-comparison.json").write_text(json.dumps(report,indent=2)+"\n")
+          print(json.dumps(report))
+          PY
+      - name: Preserve review evidence on the fork
+        shell: bash
+        run: |
+          set -euo pipefail
+          evidence="$RUNNER_TEMP/native-evidence"
+          git worktree add --detach "$evidence" HEAD
+          mkdir -p "$evidence/docs/images" "$evidence/native-map-sources"
+          cp "$UI_OUTPUT/standalone/map-sources-settings.png" "$evidence/docs/images/"
+          cp "$UI_OUTPUT/standalone/map-sources-switcher.png" "$evidence/docs/images/"
+          cp .github/native-map-sources.mjs "$evidence/native-map-sources/test.mjs"
+          for name in standalone all-features baseline-close feature-close; do
+            cp "$UI_OUTPUT/$name/result.json" "$evidence/native-map-sources/$name.json"
+          done
+          cp "$UI_OUTPUT/teardown-comparison.json" "$evidence/native-map-sources/"
+          git -C "$evidence" config user.name 'github-actions[bot]'
+          git -C "$evidence" config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git -C "$evidence" add docs/images/map-sources-settings.png docs/images/map-sources-switcher.png native-map-sources
+          git -C "$evidence" commit -m 'Record native map source UI tests and upstream teardown comparison'
+          git -C "$evidence" push --force-with-lease origin HEAD:refs/heads/validation/map-sources-ui-evidence
+          git -C "$evidence" rev-parse HEAD
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: Wayfarer-native-map-sources-2026-11-27
+          path: ${{ runner.temp }}/native-results/
+          if-no-files-found: error
