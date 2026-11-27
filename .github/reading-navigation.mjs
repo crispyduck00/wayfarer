@@ -36,6 +36,10 @@ async function launch(touch=false){
  await page.waitForFunction(()=>!!app.plugins.plugins.wayfarer,null,{timeout:15000});
  await page.evaluate(async()=>{const file=app.vault.getAbstractFileByPath('Trip.md');await app.workspace.getLeaf(false).openFile(file,{state:{mode:'preview'}});const p=app.plugins.plugins.wayfarer;p.refresh();await p.openMap();});
  await page.waitForFunction(()=>app.workspace.getLeavesOfType('wayfarer').some(l=>l.view.isReady));
+ await page.waitForTimeout(700);
+ await page.waitForFunction(()=>!!app.plugins.plugins.wayfarer&&app.workspace.layoutReady);
+ await page.evaluate(async()=>{const p=app.plugins.plugins.wayfarer;p.refresh();await p.openMap();});
+ await page.waitForFunction(()=>app.workspace.getLeavesOfType('wayfarer').some(l=>l.view.isReady));
  await page.evaluate(()=>{const v=app.workspace.getLeavesOfType('wayfarer').find(l=>l.view.isReady).view;v.contentEl.dataset.basemapTest='first';window.__basemapTest={first:v};});
 }
 const state=()=>page.evaluate(()=>{const v=__basemapTest.first,m=v.map;let tiles=0;m.eachLayer(l=>{if(l._url)tiles++;});return{active:v.basemaps?.activeId,tiles,markers:v.markers.size,zoom:m.getZoom(),sources:app.plugins.plugins.wayfarer.settings.mapSources,remembered:app.loadLocalStorage('wayfarer:basemap')};});
