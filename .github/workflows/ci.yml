@@ -1,15 +1,20 @@
-name: CI
-
+name: Overview navigation verification
 on:
-  push:
-    branches: [main]
   pull_request:
-
+permissions:
+  contents: read
 jobs:
-  build:
+  check:
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        ref: ["f1aaf1def9b7695d2a9c77b0570fb5c0f2f95f65", "b8b4627011c46245479fa453dfa82dc7795d6281"]
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ matrix.ref }}
+          fetch-depth: 0
       - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v4
         with:
@@ -17,3 +22,52 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm check
+  native:
+    needs: check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: pnpm
+      - name: Prepare official desktop renderer
+        shell: bash
+        run: |
+          set -euo pipefail
+          export NATIVE_DEPS="$RUNNER_TEMP/native-deps"
+          export UI_OUTPUT="$RUNNER_TEMP/navigation-results"
+          export OBSIDIAN_BIN="$RUNNER_TEMP/obsidian-desktop/obsidian-1.15.1/obsidian"
+          echo "NATIVE_DEPS=$NATIVE_DEPS" >> "$GITHUB_ENV"
+          echo "UI_OUTPUT=$UI_OUTPUT" >> "$GITHUB_ENV"
+          echo "OBSIDIAN_BIN=$OBSIDIAN_BIN" >> "$GITHUB_ENV"
+          pnpm install --frozen-lockfile
+          npm install --prefix "$NATIVE_DEPS" --no-save playwright@1.56.1
+          sudo apt-get update -qq
+          sudo apt-get install -y libgtk-3-0t64 libnss3 libasound2t64 libgbm1 libxss1
+          mkdir -p "$RUNNER_TEMP/obsidian-desktop" "$UI_OUTPUT"
+          curl -fLsS --retry 2 https://github.com/obsidianmd/obsidian-releases/releases/download/v1.15.1/obsidian-1.15.1.tar.gz -o "$RUNNER_TEMP/obsidian.tar.gz"
+          tar -xzf "$RUNNER_TEMP/obsidian.tar.gz" -C "$RUNNER_TEMP/obsidian-desktop"
+      - name: Native overview and Reading regressions
+        shell: bash
+        run: |
+          set -euo pipefail
+          for entry in overview:f1aaf1def9b7695d2a9c77b0570fb5c0f2f95f65 combined:b8b4627011c46245479fa453dfa82dc7795d6281; do
+            name="${entry%%:*}"
+            ref="${entry#*:}"
+            source_dir="$RUNNER_TEMP/navigation-$name"
+            git worktree add --detach "$source_dir" "$ref"
+            ln -s "$GITHUB_WORKSPACE/node_modules" "$source_dir/node_modules"
+            pnpm --dir "$source_dir" build > "$UI_OUTPUT/build-$name.log" 2>&1
+            node .github/overview-navigation.mjs "$source_dir" "$name" 2>&1 | tee "$UI_OUTPUT/overview-$name.log"
+            node .github/reading-navigation.mjs "$source_dir" "reading-$name" 2>&1 | tee "$UI_OUTPUT/reading-$name.log"
+          done
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: Wayfarer-overview-navigation-2026-11-27
+          path: ${{ runner.temp }}/navigation-results/
+          if-no-files-found: error
