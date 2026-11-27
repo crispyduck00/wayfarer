@@ -14,10 +14,10 @@ jobs:
       matrix:
         include:
           - name: standalone-map-sources
-            ref: 6972121d479a7d68709a51dfa7dcc81012d8d0f4
+            ref: 14020ce04f95d8bb8b9d957c1575d90fc917e345
             tests: 177
           - name: all-features
-            ref: 67fbcf97bfcfe4a9e685afb5419f4a346be5519f
+            ref: 43795311b5e6ea3286ad4c9f274463c8756e2ecd
             tests: 241
     steps:
       - uses: actions/checkout@v4
@@ -71,7 +71,7 @@ jobs:
               ("session-metadata", "7327b2f9fe0b41dc5f7c81e5750fd09ed4b595f4", "d7c393a6bbc368b8cef55a7b41e83cc9eacdb479"),
               ("overview", upstream, "dd5c438de7bc4cb27988286e6aea967fab8a6173"),
               ("card-description", upstream, "6494c07e7bbfed12c11cc7d826c89418353d8eda"),
-              ("map-sources", upstream, "6972121d479a7d68709a51dfa7dcc81012d8d0f4"),
+              ("map-sources", upstream, "14020ce04f95d8bb8b9d957c1575d90fc917e345"),
           ]:
               if os.environ["BUILD_KIND"] == "all-features" or name == "map-sources":
                   git("format-patch", "--output-directory", str(root / "patches" / name), start + ".." + end)
@@ -79,7 +79,7 @@ jobs:
               "source_commit": candidate,
               "source_tree": git("rev-parse", "HEAD^{tree}").strip(),
               "upstream": upstream,
-              "map_sources": "6972121d479a7d68709a51dfa7dcc81012d8d0f4",
+              "map_sources": "14020ce04f95d8bb8b9d957c1575d90fc917e345",
               "kind": os.environ["BUILD_KIND"],
               "validation": "Full pnpm check in GitHub Actions; host/network mocked in bundle smoke",
               "unit_tests": tests,
@@ -168,7 +168,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          for entry in standalone:6972121d479a7d68709a51dfa7dcc81012d8d0f4 all-features:67fbcf97bfcfe4a9e685afb5419f4a346be5519f baseline:238332f6c910e9153e22cd7fda5b62380369140a; do
+          for entry in standalone:14020ce04f95d8bb8b9d957c1575d90fc917e345 all-features:43795311b5e6ea3286ad4c9f274463c8756e2ecd baseline:238332f6c910e9153e22cd7fda5b62380369140a; do
             name="${entry%%:*}"
             ref="${entry#*:}"
             source_dir="$RUNNER_TEMP/native-source-$name"

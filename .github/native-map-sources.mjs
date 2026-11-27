@@ -20,7 +20,7 @@ const checks=[],requests=[],pageErrors=[];let slow=false,offline=false,context,p
 const ok=(v,n)=>{assert(v,n);checks.push(n);console.log('PASS:',label,n);};
 async function launch(touch=false){
  touchMode=touch;writeFileSync(base+'/vault/.obsidian/workspace.json',JSON.stringify(layout));
- context=await chromium.launchPersistentContext(base+'/profile-pipe',{executablePath:process.env.OBSIDIAN_BIN,headless:true,args:['--ozone-platform=headless','--no-sandbox','--disable-gpu','--disable-dev-shm-usage'],env:{...process.env,XDG_CONFIG_HOME:base+'/xdg'},viewport:touch?{width:412,height:915}:{width:1280,height:900},hasTouch:touch,timeout:30000});
+ context=await chromium.launchPersistentContext(base+'/profile-pipe',{executablePath:process.env.OBSIDIAN_BIN,headless:true,args:['--ozone-platform=headless','--no-sandbox','--disable-gpu','--disable-dev-shm-usage'],env:{...process.env,XDG_CONFIG_HOME:base+'/xdg'},viewport:null,hasTouch:touch,timeout:30000});
  await context.route(/https?:\/\/(tiles\.test|tiles\.internal)\//,async route=>{
   const u=new URL(route.request().url());requests.push(u.pathname);
   if(offline){await route.abort('internetdisconnected').catch(()=>{});return;}
@@ -30,7 +30,7 @@ async function launch(touch=false){
   const body=`<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256"><rect width="256" height="256" fill="${color}"/><path d="M0 60L256 180 M30 0L200 256" stroke="#bbc7a5" stroke-width="6"/><path d="M0 128H256M128 0V256" stroke="#809080" stroke-width="1"/><text x="12" y="25" fill="#445544" font-size="15">${name} · test tiles</text></svg>`;
   await route.fulfill({status:code,contentType:'image/svg+xml',body:code===200?body:'Test tile failure'}).catch(()=>{});
  });
- page=context.pages()[0];page.on('pageerror',e=>{pageErrors.push(e.stack??String(e));console.log('Native page error:',e.stack??String(e));});
+ page=context.pages()[0];await page.setViewportSize(touch?{width:412,height:915}:{width:1280,height:900});page.on('pageerror',e=>{pageErrors.push(e.stack??String(e));console.log('Native page error:',e.stack??String(e));});
  await page.waitForFunction(()=>!!window.app?.workspace?.layoutReady,null,{timeout:25000});
  const trust=page.getByRole('button',{name:'Trust author and enable plugins',exact:true});if(await trust.count())await trust.click();
  await page.waitForFunction(()=>!!app.plugins.plugins.wayfarer,null,{timeout:15000});
@@ -68,15 +68,16 @@ try{
   ok(await page.getByRole('button',{name:'Map source',exact:true}).count()===0,'one source has no switcher');
   await openEditor();await modal().getByRole('button',{name:'Add',exact:true}).click();await edit('Discard me','https://tiles.test/{apikey}/{z}/{x}/{y}.png');
   await modal().getByRole('button',{name:'Save',exact:true}).click();ok(await modal().isVisible()&&(await state()).sources.length===1,'invalid template is rejected without saving');
+  await row('Tile URL').getByRole('textbox').fill('https://tiles.test/unused/{z}/{x}/{y}.png');await modal().getByLabel('Maximum zoom',{exact:true}).fill('');await modal().getByRole('button',{name:'Save',exact:true}).click();ok(await modal().isVisible()&&(await state()).sources.length===1,'blank maximum zoom is rejected without saving');
   await modal().getByRole('button',{name:'Cancel',exact:true}).click();ok((await state()).sources.length===1,'cancel leaves settings unchanged');
-  await openEditor();await edit('Street','https://tiles.test/legacy/{z}/{x}/{y}.png?key=TEST-SECRET');
+  await openEditor();await edit('Street','https://tiles.test/legacy/{s}/{z}/{x}/{y}.png?key=TEST-SECRET');await row('Subdomains').getByRole('textbox').fill('maps1,maps2');await row('Subdomains').getByRole('textbox').fill('');
   await modal().getByRole('button',{name:'Add',exact:true}).click();await edit('Satellite','https://tiles.test/satellite/{z}/{x}/{y}.png',16);
   await modal().getByRole('button',{name:'Add',exact:true}).click();await edit('Hybrid','https://tiles.test/hybrid/{z}/{x}/{y}.png');
   await modal().getByRole('button',{name:'Move source up',exact:true}).click();await row('Default map').getByRole('combobox').selectOption({label:'Hybrid'});
   ok((await state()).sources.length===1,'draft edits do not change the active configuration');
   await row('Edit source').getByRole('combobox').selectOption({label:'Satellite'});await editorPage.setViewportSize({width:900,height:1100});await modal().screenshot({path:output+'/map-sources-settings.png'});
   await modal().getByRole('button',{name:'Save',exact:true}).click();await page.evaluate(()=>app.setting.close());
-  s=await state();ok(s.sources.map(s=>s.name).join(',')==='Street,Hybrid,Satellite','add/edit/reorder/default are saved');
+  s=await state();ok(s.sources.map(s=>s.name).join(',')==='Street,Hybrid,Satellite','add/edit/reorder/default are saved');await page.waitForFunction(()=>[...document.querySelectorAll('img.leaflet-tile')].some(t=>/\/legacy\/[abc]\//.test(t.src)));ok(requests.some(p=>/^\/legacy\/[abc]\//.test(p)),'cleared subdomains use Leaflet defaults for {s}');
   ok(!requests.some(p=>p.startsWith('/satellite/')||p.startsWith('/hybrid/')),'inactive backgrounds make no tile requests');
   await page.evaluate(()=>{const v=__basemapTest.first;app.workspace.setActiveLeaf(v.leaf,{focus:true});v.chooseDay(v.itinerary.days[0]);v.map.setView([35.6,139.6],19);const stop=v.itinerary.stops[0];v.setFocus(stop);v.openPopup(stop);app.plugins.plugins.wayfarer.refresh();});
   await page.waitForTimeout(150);await page.waitForFunction(()=>{const m=__basemapTest.first.map;return !m._animatingZoom&&!m._panAnim?._inProgress});
