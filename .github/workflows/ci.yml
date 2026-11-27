@@ -138,10 +138,6 @@ jobs:
     needs: build
     runs-on: ubuntu-latest
     timeout-minutes: 20
-    env:
-      NATIVE_DEPS: ${{ runner.temp }}/native-deps
-      UI_OUTPUT: ${{ runner.temp }}/native-results
-      OBSIDIAN_BIN: ${{ runner.temp }}/obsidian-desktop/obsidian-1.15.1/obsidian
     steps:
       - uses: actions/checkout@v4
         with:
@@ -155,6 +151,12 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          export NATIVE_DEPS="$RUNNER_TEMP/native-deps"
+          export UI_OUTPUT="$RUNNER_TEMP/native-results"
+          export OBSIDIAN_BIN="$RUNNER_TEMP/obsidian-desktop/obsidian-1.15.1/obsidian"
+          echo "NATIVE_DEPS=$NATIVE_DEPS" >> "$GITHUB_ENV"
+          echo "UI_OUTPUT=$UI_OUTPUT" >> "$GITHUB_ENV"
+          echo "OBSIDIAN_BIN=$OBSIDIAN_BIN" >> "$GITHUB_ENV"
           pnpm install --frozen-lockfile
           npm install --prefix "$NATIVE_DEPS" --no-save playwright@1.56.1
           sudo apt-get update -qq
