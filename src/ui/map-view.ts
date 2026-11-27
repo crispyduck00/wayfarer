@@ -3,7 +3,7 @@ import * as L from "leaflet";
 import { CATEGORY_EMOJI, TRANSPORT_EMOJI, type Transport } from "../core/category";
 import { dayColor } from "../core/colors";
 import { directionsUrl, navigateUrl, placeUrl } from "../core/gmaps-out";
-import { stopNotes, type Day, type Itinerary, type Stop } from "../core/itinerary";
+import { dayAtLine, stopNotes, type Day, type Itinerary, type Stop } from "../core/itinerary";
 import { legText, type Leg } from "../core/legs";
 import { checkHours, describeHours, hoursForWeekday } from "../core/schedule";
 import { minutesOf } from "../core/legs";
@@ -35,7 +35,10 @@ export class WayfarerView extends ItemView {
   private arrowSpecs: Array<[L.LatLng[], string, string]> = [];
   private markers = new Map<Stop, L.Marker>();
   /** Legs and dates per day, computed once per draw and reused by the map, the strip and the popups. */
-  private plans = new Map<Day, { legs: Leg[]; date: Date | null }>();
+  private plans = new Map<Day, { legs: Leg[]; date: Date | null; incoming?: Leg }>();
+  private sourceItinerary: Itinerary | null = null;
+  private showOverview = false;
+  private renderedOverview = false;
   private tilesKey = "";
   private legendEl!: HTMLElement;
   private mapEl!: HTMLElement;
@@ -284,15 +287,24 @@ export class WayfarerView extends ItemView {
     if (!this.map) return;
     this.applyTiles();
     const fileChanged = file?.path !== this.file?.path;
+    this.sourceItinerary = itinerary;
+    if (fileChanged || !itinerary?.overview?.stops.length) this.showOverview = false;
+    if (!itinerary?.stops.length && itinerary?.overview?.stops.length) this.showOverview = true;
+    const layerChanged = this.showOverview !== this.renderedOverview;
+    this.renderedOverview = this.showOverview;
+    if (this.showOverview) {
+      itinerary = itinerary?.overview ?? null;
+      cursorDay = itinerary ? dayAtLine(itinerary, cursorLine) : -1;
+    }
     const prevItinerary = this.itinerary;
     const prevFocused = this.focused;
     this.file = file;
     this.itinerary = itinerary;
-    if (fileChanged) {
+    if (fileChanged || layerChanged) {
       this.pinnedHeading = null;
       this.lastCursorLine = cursorLine;
       this.focused = file && itinerary
-        ? resolveStop(itinerary, readProgress(this.app.loadLocalStorage(`wayfarer:selection:${file.path}`)).current)
+        ? resolveStop(itinerary, readProgress(this.app.loadLocalStorage(this.selectionKey(file.path))).current)
         : null;
       if (this.focused) this.pinnedHeading = itinerary?.days.find((d) => d.index === this.focused?.dayIndex)?.headingLine ?? null;
       this.userMoved = false;
@@ -318,7 +330,7 @@ export class WayfarerView extends ItemView {
     this.emptyEl.toggleClass("is-hidden", stops.length > 0);
     if (!itinerary || stops.length === 0) return;
 
-    if (fileChanged || this.fittedFor !== file?.path) {
+    if (fileChanged || layerChanged || this.fittedFor !== file?.path) {
       this.fitAll(stops);
       this.fittedFor = file?.path ?? null;
     }
@@ -331,6 +343,7 @@ export class WayfarerView extends ItemView {
    */
   onCursor(line: number, day: number): void {
     if (!this.itinerary || !this.map || Platform.isMobile) return;
+    if (this.showOverview) day = dayAtLine(this.itinerary, line);
     const lineChanged = line !== this.lastCursorLine;
     if (!lineChanged) return;
     this.lastCursorLine = line;
@@ -361,11 +374,13 @@ export class WayfarerView extends ItemView {
   }
 
   /** Legs for a day plus the date read from its heading. */
-  plan(day: Day): { legs: Leg[]; date: Date | null } {
+  plan(day: Day): { legs: Leg[]; date: Date | null; incoming?: Leg } {
     let p = this.plans.get(day);
     if (!p) {
       const date = dateForDay(day);
       p = { legs: this.plugin.router.legsFor(day, date, this.file?.path ?? ""), date };
+      const previous = this.showOverview ? this.itinerary?.days[day.index - 1]?.stops.at(-1) : undefined;
+      if (previous) p.incoming = this.plugin.router.overviewLeg(previous, day, this.file?.path ?? "");
       this.plans.set(day, p);
     }
     return p;
@@ -409,7 +424,7 @@ export class WayfarerView extends ItemView {
 
   /** What the pane currently shows, as a string; `render` skips the rebuild when it has not changed. */
   private signature(): string {
-    return `${this.file?.path}|${this.plugin.settingsRev}|${this.activeDay}|${this.pinnedDay}|${this.focused?.line ?? -1}|${signatureOf(this.itinerary)}`;
+    return `${this.file?.path}|${this.plugin.settingsRev}|${this.showOverview}|${this.activeDay}|${this.pinnedDay}|${this.focused?.line ?? -1}|${signatureOf(this.itinerary)}|${signatureOf(this.sourceItinerary?.overview ?? null)}|${this.showOverview ? signatureOf(this.sourceItinerary) : ""}`;
   }
 
   private draw(): void {
@@ -435,7 +450,8 @@ export class WayfarerView extends ItemView {
     const cls = dim ? "wf-dim" : "wf-active";
 
     if (this.plugin.settings.drawRoutes) {
-      for (const leg of this.legsOf(day)) {
+      const { legs, incoming } = this.plan(day);
+      for (const leg of incoming ? [incoming, ...legs] : legs) {
         const mode = leg.mode;
         const lineColor = leg.lateBy > 0 && !dim ? "#d0342c" : color;
         // A routed leg follows the road and is solid; a straight line stands for "no route known" and is dashed.
@@ -526,8 +542,8 @@ export class WayfarerView extends ItemView {
     if (stop.meta?.address) body.createDiv({ cls: "wf-card-addr", text: stop.meta.address });
     const actions = body.createDiv({ cls: "wf-card-actions" });
     actions.createEl("a", { cls: "wf-ext", text: t("open_gmaps"), attr: { href: placeUrl(stop) } });
-    const prev = day.stops[stop.index - 1];
-    const leg = prev ? this.legsOf(day)[stop.index - 1] : undefined;
+    const leg = stop.index > 0 ? this.legsOf(day)[stop.index - 1] : this.plan(day).incoming;
+    const prev = leg?.from;
     if (leg && prev) {
       // One line for the leg: mode, where from, numbers. With a mode it is also the directions link.
       const t2 = body.createDiv({ cls: `wf-card-leg${leg.lateBy > 0 ? " is-late" : ""}` });
@@ -544,6 +560,17 @@ export class WayfarerView extends ItemView {
     if (stop.meta?.website && /^https?:\/\//i.test(stop.meta.website)) actions.createEl("a", { cls: "wf-ext", text: t("website"), attr: { href: stop.meta.website } });
     const jump = actions.createEl("a", { text: t("to_line"), attr: { href: "#" } });
     jump.onclick = (e) => { e.preventDefault(); void this.jumpTo(stop); };
+    if (this.showOverview) {
+      const children = this.sourceItinerary?.days.filter((d) => d.headingLine > day.headingLine && d.headingLine < day.endLine) ?? [];
+      if (children.length) {
+        body.createDiv({ cls: "wf-card-sub", text: t("day_plans") });
+        const links = body.createDiv({ cls: "wf-card-actions" });
+        for (const child of children) {
+          const button = links.createEl("button", { cls: "wf-inline-action", text: child.title });
+          button.onclick = () => { this.chooseLayer(false); this.chooseDay(child); };
+        }
+      }
+    }
     return root;
   }
 
@@ -587,6 +614,16 @@ export class WayfarerView extends ItemView {
     }).addTo(this.arrows);
   }
 
+  private selectionKey(path: string): string {
+    return `wayfarer:selection:${path}${this.showOverview ? ":overview" : ""}`;
+  }
+
+  private chooseLayer(overview: boolean): void {
+    if (!this.sourceItinerary) return;
+    this.showOverview = overview;
+    this.render(this.file, this.sourceItinerary, -1, this.lastCursorLine);
+  }
+
   private chooseDay(day: Day | null): void {
     this.pinnedHeading = day?.headingLine ?? null;
     this.pinnedDay = day?.index ?? -1;
@@ -598,6 +635,13 @@ export class WayfarerView extends ItemView {
 
   private drawLegend(it: Itinerary): void {
     const dates = this.legendEl.createDiv({ cls: "wf-dates" });
+    const layered = !!this.sourceItinerary?.stops.length && !!this.sourceItinerary.overview?.stops.length;
+    if (layered) {
+      const layer = dates.createEl("button", { cls: "wf-chip wf-chip-all wf-layer-toggle", text: t("trip_overview") });
+      layer.toggleClass("is-active", this.showOverview);
+      layer.setAttr("aria-pressed", String(this.showOverview));
+      layer.onclick = () => this.chooseLayer(!this.showOverview);
+    }
     const all = dates.createEl("button", { cls: "wf-chip wf-chip-all", text: t("all") });
     all.toggleClass("is-active", this.activeDay === -1);
     all.setAttr("aria-pressed", String(this.activeDay === -1));
@@ -613,11 +657,12 @@ export class WayfarerView extends ItemView {
     }
     const dayControl = this.legendEl.createDiv({ cls: "wf-day-control" });
     setIcon(dayControl.createSpan({ cls: "wf-day-chevron" }), "chevron-down");
-    const select = dayControl.createEl("select", { cls: "wf-day-select", attr: { "aria-label": t("choose_day") } });
+    const select = dayControl.createEl("select", { cls: "wf-day-select", attr: { "aria-label": t(this.showOverview ? "choose_stage" : "choose_day") } });
+    if (layered) select.createEl("option", { text: t(this.showOverview ? "day_plans" : "trip_overview"), value: "layer" });
     select.createEl("option", { text: t("overview"), value: "-1" });
-    for (const day of it.days) select.createEl("option", { text: `${day.label || t("other")} · ${t("day", { n: day.index + 1 })}`, value: String(day.index), attr: { title: day.title } });
+    for (const day of it.days) select.createEl("option", { text: `${day.label || t("other")} · ${t(this.showOverview ? "stage" : "day", { n: day.index + 1 })}`, value: String(day.index), attr: { title: day.title } });
     select.value = String(this.activeDay);
-    select.onchange = () => this.chooseDay(it.days.find((d) => d.index === Number(select.value)) ?? null);
+    select.onchange = () => select.value === "layer" ? this.chooseLayer(!this.showOverview) : this.chooseDay(it.days.find((d) => d.index === Number(select.value)) ?? null);
     const right = this.legendEl.createDiv({ cls: "wf-legend-right" });
     const map = right.createEl("button", { cls: "wf-chip wf-chip-icon wf-map-toggle", attr: { "aria-label": t("view_map") } });
     setIcon(map, "map");
@@ -670,7 +715,7 @@ export class WayfarerView extends ItemView {
     const stop = this.selectedStop();
     if (!it || !stop) return;
     if (this.file) {
-      const key = `wayfarer:selection:${this.file.path}`;
+      const key = this.selectionKey(this.file.path);
       const selection = { current: stopRef(it, stop) };
       if (JSON.stringify(this.app.loadLocalStorage(key)) !== JSON.stringify(selection)) this.app.saveLocalStorage(key, selection);
     }
@@ -707,7 +752,8 @@ export class WayfarerView extends ItemView {
         const h = this.stripEl.createDiv({ cls: "wf-strip-day", text: d.label || t("other") });
         h.style.setProperty("--wf-color", color);
       }
-      const { legs, date } = this.plan(d);
+      const { legs, date, incoming } = this.plan(d);
+      if (incoming) this.drawLegRow(incoming, color);
       d.stops.forEach((stop, i) => {
         if (i > 0) this.drawLegRow(legs[i - 1], color);
         const card = this.stripEl.createEl("button", { cls: "wf-stop" });
@@ -740,7 +786,8 @@ export class WayfarerView extends ItemView {
           if (warn) box.createDiv({ cls: "wf-stop-note is-late", text: `⚠ ${warn}` });
           for (const n of notes) box.createDiv({ cls: "wf-stop-note", text: n });
         }
-        card.draggable = true;
+        // Reordering a stage means moving its whole heading subtree, not just its pin line.
+        card.draggable = !this.showOverview;
         card.ondragstart = (e) => {
           // A private type: a card dropped on the editor by mistake must not type its line number into the note.
           e.dataTransfer?.setData(DRAG_TYPE, `${this.file?.path ?? ""}\n${stop.line}`);
@@ -756,7 +803,7 @@ export class WayfarerView extends ItemView {
           const [path, line] = (e.dataTransfer?.getData(DRAG_TYPE) ?? "").split("\n");
           const src = Number(line);
           const moving = line !== undefined && Number.isInteger(src) && src !== stop.line ? this.itinerary?.stops.find((x) => x.line === src) : undefined;
-          if (moving && this.file && path === this.file.path) void this.plugin.moveStopLine(moving, stop, path);
+          if (!this.showOverview && moving && this.file && path === this.file.path) void this.plugin.moveStopLine(moving, stop, path);
         };
         card.onclick = () => {
           if (this.isNarrow()) { this.narrowOpen = false; this.applySplit(); }
@@ -960,7 +1007,7 @@ function signatureOf(it: Itinerary | null): string {
   if (!it) return "";
   let d = digests.get(it);
   if (d === undefined) {
-    d = JSON.stringify([it.days.map((d) => [d.headingLine, d.title, d.stops.map((s) => [s.line, s.from, s.name, s.url, s.lat, s.lng, s.transport, s.time, s.emoji, s.image, s.note, s.notes, s.meta])])]);
+    d = JSON.stringify([it.days.map((d) => [d.headingLine, d.endLine, d.title, d.stops.map((s) => [s.line, s.from, s.name, s.url, s.lat, s.lng, s.transport, s.time, s.emoji, s.image, s.note, s.notes, s.meta])])]);
     digests.set(it, d);
   }
   return d;
