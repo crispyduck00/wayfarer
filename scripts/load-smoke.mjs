@@ -92,6 +92,7 @@ const obsidianStub = {
   MarkdownView: class {},
   TFile: class {},
   Platform: { isMobile: false, isDesktopApp: true },
+  setIcon() {},
   WorkspaceLeaf: class {},
   debounce: (fn) => Object.assign(fn, { cancel: () => { debounceCancellations++; } }),
   normalizePath: (path) => path.replace(/\\/g, "/").replace(/\/+/g, "/").replace(/^\/|\/$/g, ""),
@@ -712,6 +713,196 @@ app.vault = deferredVault;
 await settingsTab.setControlValue("storeMetadata", true);
 plugin.settings.googleApiKey = "smoke-key";
 console.log("smoke: OK (metadata off, settings UIs, import/details/routes, comments, stale replies and restart)");
+
+// Exercise actual bundled handlers and real Leaflet layers; only host surfaces and camera/layout are stubbed.
+{
+  const surface = (tag = "div", options = {}) => {
+    const classes = new Set((options.cls ?? "").split(" ").filter(Boolean));
+    return {
+      tag, classes, children: [], attrs: { ...options.attr }, value: options.value ?? "", text: options.text ?? "", style: { setProperty() {} },
+      win: globalThis, clientWidth: 1000, offsetHeight: 0,
+      classList: { contains: (cls) => classes.has(cls) },
+      createEl(t, o) { const child = surface(t, o); this.children.push(child); child.parent = this; return child; },
+      createDiv(o) { return this.createEl("div", typeof o === "string" ? { cls: o } : o); },
+      createSpan(o) { return this.createEl("span", o); },
+      empty() { this.children = []; }, setText(t) { this.text = t; },
+      addClass(cls) { classes.add(cls); }, removeClass(cls) { classes.delete(cls); },
+      toggleClass(cls, value) { if (value) classes.add(cls); else classes.delete(cls); },
+      setAttr(key, value) { this.attrs[key] = value; }, setCssProps() {}, scrollIntoView() {},
+      insertBefore(child, before) { this.children.splice(this.children.indexOf(before), 0, child); },
+      getBoundingClientRect: () => ({ top: 0, left: 0, bottom: 0, right: 1000 }),
+    };
+  };
+  const descendants = (root) => [root, ...root.children.flatMap(descendants)];
+  const byClass = (root, cls) => descendants(root).filter((el) => el.classes.has(cls));
+  const local = new Map();
+  app.loadLocalStorage = (key) => local.get(key);
+  app.saveLocalStorage = (key, value) => local.set(key, value);
+  app.workspace.setActiveLeaf = () => {};
+  globalThis.createDiv = (o) => surface("div", o);
+  globalThis.createSpan = (o) => surface("span", o);
+  plugin.settings.googleApiKey = "";
+  plugin.settings.autoOpen = false;
+  assert(plugin.settings.overviewHeadingLevel === 0, "old settings keep the flat itinerary by default");
+  assert(plugin.settingTabs[0].getSettingDefinitions().some((s) => s.items?.some((i) => i.control?.key === "overviewHeadingLevel")), "overview setting is discoverable");
+  await plugin.settingTabs[0].setControlValue("dayHeadingLevel", "3");
+  await plugin.settingTabs[0].setControlValue("overviewHeadingLevel", "2");
+  assert(plugin.settings.overviewHeadingLevel === 2 && plugin.savedData.overviewHeadingLevel === 2, "overview setting is numeric and saved");
+  const layered = "# Trip\n## 2027-01-01 Colombo\n- [Hotel A](geo:35,139)\n### 2027-01-01 City\n- [Airport](geo:35.1,139)\n- [City](geo:35.2,139)\n## 2027-01-02 - 2027-01-03 Negombo\n- 🚗 gg [Hotel B](geo:36,140) [🗺️](https://www.google.com/maps/place/Hotel+B)\n### 2027-01-02 Mangroves\n- [Market](geo:36.1,140)\n- [Mangroves](geo:36.2,140)\n### 2027-01-03 Beach\n- [Hotel B](geo:36,140)\n- [Beach](geo:36.3,140)";
+  openNote("Overview.md", layered);
+  const view = plugin.views["wayfarer"]({});
+  view.app = app;
+  view.map = { closePopup() {} };
+  for (const name of ["contentEl", "legendEl", "stripEl", "journeyEl", "emptyEl"]) view[name] = surface();
+  for (const name of ["applyTiles", "applySplit", "drawArrow", "fitAll", "flyToStop", "openPopup"]) view[name] = () => {};
+  view.render(md.file, plugin.current.itinerary, -1);
+  const lines = () => view.layer.getLayers().filter((layer) => typeof layer.getLatLngs === "function");
+  assert(view.markers.size === 6 && lines().length === 3, "daily view retains its pins and within-day legs only");
+  const dailySelection = app.loadLocalStorage("wayfarer:selection:Overview.md");
+  assert(byClass(view.stripEl, "wf-stop").every((card) => card.draggable), "daily drag and drop stays available");
+  byClass(view.legendEl, "wf-layer-toggle")[0].onclick();
+  assert(view.showOverview && view.markers.size === 2 && lines().length === 1, "overview draws only parent pins and their connecting route");
+  assert(byClass(view.stripEl, "wf-stop").every((card) => !card.draggable), "overview cannot move a pin out of its heading subtree");
+  assert(byClass(view.stripEl, "wf-leg").length === 1, "timeline shows the connection between stages");
+  assert(app.loadLocalStorage("wayfarer:selection:Overview.md") === dailySelection && local.has("wayfarer:selection:Overview.md:overview"), "overview selection cannot overwrite daily selection");
+  assert(source === layered, "switching views leaves the Markdown intact");
+  view.contentEl.clientWidth = 400;
+  const select = byClass(view.legendEl, "wf-day-select")[0];
+  assert(select.children.some((el) => el.value === "layer"), "mobile selector offers the other layer");
+  select.value = "layer"; select.onchange();
+  assert(!view.showOverview && view.markers.size === 6, "mobile layer selection returns to daily pins");
+  view.contentEl.clientWidth = 1000;
+  const cursor = md.editor.setCursor;
+  let target, scrollRange, centered, scrollState;
+  let activations = 0;
+  md.editor.setCursor = (pos) => { target = pos; };
+  md.editor.scrollIntoView = (range, center) => { scrollRange = range; centered = center; };
+  md.setEphemeralState = (state) => { scrollState = state; };
+  app.workspace.setActiveLeaf = () => { activations++; };
+  md.getMode = () => "source";
+  view.chooseLayer(true);
+  const stage = view.itinerary.days[1];
+  const popup = view.popupEl(stage, stage.stops[0]);
+  assert(byClass(popup, "wf-card-note").map((el) => el.text).join(" ") === "gg", "a prefixed geo/source pair does not repeat its place name in the popup");
+  view.chooseDay(stage);
+  assert(byClass(view.stripEl, "wf-stop-sub").some((el) => descendants(el).some((item) => item.text === "gg")), "the collapsed timeline card shows only the prefix text");
+  byClass(view.stripEl, "wf-stop")[0].onclick();
+  assert(byClass(view.stripEl, "wf-stop-note").some((el) => el.text === "gg"), "the expanded timeline card uses the same description");
+  const child = descendants(popup).find((el) => el.tag === "button" && el.text === "2027-01-03 Beach");
+  assert(child, "stage card lists its child daily plans");
+  child.onclick();
+  assert(!view.showOverview && view.activeDay === 2, "child click opens the original daily plan");
+  assert(target?.line === plugin.current.itinerary.days[2].headingLine && target.ch === 0 && scrollState?.scroll === target.line, "child drilldown reveals its heading at the top of the source view");
+  assert(source === layered, "drilldown leaves the original plan untouched");
+  view.chooseLayer(true);
+  const selected = view.itinerary.stops[1];
+  await view.jumpTo(selected);
+  assert(target?.line === selected.line && target.ch === selected.from && scrollRange.to.ch === selected.to && centered === true, "stop jump retains the exact source span and upstream editor centering");
+  md.getMode = () => "preview";
+  target = undefined; scrollState = undefined;
+  const activeBefore = activations;
+  await view.jumpTo(selected, false);
+  assert(scrollState?.line === selected.line && !target && activations === activeBefore, "passive map click requests native Reading-view line navigation without moving a hidden editor or stealing focus");
+  obsidianStub.Platform.isMobile = true;
+  scrollState = undefined;
+  await view.jumpTo(selected, false);
+  assert(!scrollState, "mobile map selection does not navigate away from the map");
+  await view.jumpTo(selected);
+  assert(scrollState?.line === selected.line && activations === activeBefore + 1, "explicit mobile Go to line requests native Reading-view line navigation");
+  scrollState = undefined;
+  await view.jumpTo({ line: 0, from: 0, to: 0 });
+  assert(scrollState?.line === 0 && !target, "Reading-view line zero is a valid explicit navigation target");
+  obsidianStub.Platform.isMobile = false;
+  const leaves = app.workspace.getLeavesOfType;
+  app.workspace.getLeavesOfType = (type) => type === "wayfarer" ? [{ view }] : leaves(type);
+  let cursorCalls = 0;
+  const onCursor = view.onCursor;
+  view.onCursor = () => { cursorCalls++; };
+  plugin.trackCursor();
+  assert(cursorCalls === 0, "Reading-view selections cannot follow a stale hidden editor cursor");
+  md.getMode = () => "source";
+  plugin.trackCursor();
+  assert(cursorCalls === 1, "editor cursor tracking is retained");
+  view.onCursor = onCursor;
+  app.workspace.getLeavesOfType = leaves;
+  view.chooseDay(null);
+  const firstStage = view.itinerary.days[0];
+  view.onCursor(plugin.current.itinerary.days[0].headingLine, 0);
+  assert(view.showOverview && view.activeDay === firstStage.index, "a child-day cursor emphasises its parent without switching layers");
+  view.chooseDay(stage);
+  view.onCursor(firstStage.stops[0].line, 0);
+  assert(view.activeDay === stage.index && !view.focused, "a pinned stage cannot focus a hidden stop from another stage");
+  view.chooseDay(null);
+  view.onCursor(firstStage.stops[0].line + 1, 0);
+  view.onCursor(firstStage.stops[0].line, 0);
+  assert(view.focused === firstStage.stops[0] && view.activeDay === firstStage.index, "All releases the pin and cursor selection resumes");
+  const sourceFile = view.file;
+  let finishOpen;
+  const pendingLeaf = { view: md, openFile: () => new Promise((resolve) => { finishOpen = resolve; }) };
+  app.workspace.getLeavesOfType = () => [];
+  app.workspace.getLeaf = () => pendingLeaf;
+  const beforeOpen = activations;
+  target = undefined;
+  const lateJump = view.jumpTo(selected);
+  view.file = Object.assign(new obsidianStub.TFile(), { path: "Unrelated.md" });
+  finishOpen();
+  await lateJump;
+  assert(!target && activations === beforeOpen, "a delayed source open cannot move or focus the new map source");
+  view.file = sourceFile;
+  app.workspace.getLeavesOfType = leaves;
+  md.editor.setCursor = cursor;
+  plugin.setStopMeta(selected, { leg: { from: "35.0000,139.0000", to: "36.0000,140.0000", via: "car", s: 7200, m: 20000 } }, true);
+  plugin.refresh();
+  assert(plugin.current.itinerary.overview.stops[1].meta?.leg?.s === 7200 && !plugin.current.itinerary.days[2].stops[0].meta?.leg, "overview route saves on its source occurrence, not a repeated daily hotel");
+  const stale = plugin.current.itinerary.overview.stops[1];
+  source = source.replace("[Hotel A](geo:35,139)", "[Hotel A](geo:34,138)");
+  const changed = source;
+  plugin.setStopMeta(stale, { leg: { from: "35.0000,139.0000", to: "36.0000,140.0000", via: "car", s: 600, m: 1000 } }, true);
+  assert(source === changed, "late overview route is rejected after its predecessor changed");
+  await plugin.settingTabs[0].setControlValue("overviewHeadingLevel", "0");
+  plugin.refresh();
+  view.render(md.file, plugin.current.itinerary, -1);
+  assert(!view.showOverview && !byClass(view.legendEl, "wf-layer-toggle").length, "disabling overview restores the original parser and view");
+  await plugin.settingTabs[0].setControlValue("overviewHeadingLevel", "2");
+  plugin.settings.googleApiKey = "smoke-key";
+  obsidianStub.requestUrl = async () => details;
+  openNote("StagesOnly.md", "## 2027-01-01\n- [Hotel](geo:35,139)");
+  view.render(md.file, plugin.current.itinerary, -1);
+  assert(view.showOverview && view.markers.size === 1 && view.emptyEl.classes.has("is-hidden"), "stage-only note opens its available overview");
+  await plugin.fetchDetails();
+  plugin.refresh();
+  assert(plugin.current.itinerary.overview.stops[0].meta?.placeId === "smoke-place", "details fetching includes overview-only notes");
+  // Integration of the independently reviewed overview and session-only features.
+  await plugin.settingTabs[0].setControlValue("storeMetadata", false);
+  plugin.settings.googleApiKey = "layered-session-key";
+  md.getMode = () => "source";
+  let factRequests = 0;
+  obsidianStub.requestUrl = async () => { factRequests++; return details; };
+  const original = "https://www.google.com/maps/place/Layer_Hotel/data=!3d35!4d139";
+  openNote("LayerSession.md", `## 2027-01-01\n- [Layer hotel](${original})\n### 2027-01-01\n- [Day hotel](geo:35,139)`);
+  await plugin.convertAll(md.editor);
+  plugin.refresh();
+  assert(plugin.current.itinerary.overview.stops[0].meta?.rating === 4.5, "imported overview facts survive reparsing in RAM");
+  assert(source.includes(`[🗺️](${original})`) && !source.includes("%%wf:"), "overview imports use the configured ordinary source pair without metadata");
+  factRequests = 0;
+  await plugin.fetchDetails();
+  plugin.refresh();
+  assert(factRequests === 2 && plugin.current.itinerary.stops[0].meta?.rating === 4.5 && plugin.current.itinerary.overview.stops[0].meta?.rating === 4.5, "explicit details include both daily and overview scopes");
+  plugin.setStopTransport(plugin.current.itinerary.overview.stops[0], "car");
+  plugin.refresh();
+  const untouched = source;
+  view.render(md.file, plugin.current.itinerary, -1);
+  view.chooseLayer(true);
+  assert(source === untouched && !source.includes("%%wf:"), "overview browsing and transport preserve metadata-free plans");
+  plugin.settings.googleApiKey = "";
+  plugin.refresh();
+  assert(!plugin.current.itinerary.stops[0].meta?.rating && !plugin.current.itinerary.overview.stops[0].meta?.rating, "credential changes invalidate session facts in both layers");
+  await plugin.settingTabs[0].setControlValue("storeMetadata", true);
+  plugin.settings.googleApiKey = "smoke-key";
+  plugin.settings.overviewHeadingLevel = 0;
+  plugin.settings.dayHeadingLevel = 2;
+  console.log("smoke: OK (overview layers, real Leaflet connections, mobile selector, drilldown, source navigation and safe route writes)");
+}
 
 openNote("A.md", note);
 let resolveRequest;
