@@ -22,11 +22,13 @@ Saved place details and routed legs travel with the note as hidden metadata. Syn
 - **Headings are days.** `## 2026-09-17 Thu Up to Senjogahara` starts a day. A range like `## 2026-09-19 ~ 2026-09-26 Tokyo` keeps a stretch you have not planned yet as one block. Undated sections (research, to-dos, candidates) stay in the same note and off the map.
 - **The map follows the note.** Put the cursor on a stop and the map flies there. Pins are coloured and numbered per day, with a line between consecutive stops.
 - **A timeline beside the map.** The day's stops top to bottom with photo, time, name and your remark, and the leg between each pair. Click a card to fly there; drag a card to reorder the note.
+- **An optional trip overview.** Group daily headings under parent headings with their own pins, for example `##` stages and `###` days. Switch to the parent route for a less crowded view of a long trip, or open a stage's child daily plans from its card. Off by default; see [Trip overview](docs/trip-overview.md).
 - **You choose the transport.** A transport emoji before the link (🚶 🚲 🚗 🚕 🚌 🚆 🚇 🚊 ⛴️ ✈️), typed or picked on a desktop timeline arrow or in a stop’s **Change transport** menu. The pick writes the emoji into the text, so note and map never disagree. Nothing is guessed.
 - **Saved Google routes.** With your key and a supported transport mode, Google Routes supplies time, distance, transit line names and route geometry. Saved routes can be read by companions without a key. Changing stops or transport can trigger new requests; flights and boats use straight-line connections.
 - **Cards, not tooltips.** Click a pin for the photo, rating, that day's opening hours, your notes, address, and links to Google Maps, directions and the line in the note.
 - **Checks against what you wrote.** A time at the start of the line is the stop's time, local to that place. A routed leg that cannot fit between two written times turns red. A stop with Google hours says "closed that day" or "opens 10:00" for that weekday.
 - **Export to Google My Maps.** One KML per note, one layer per day.
+- **Choose the map background.** Configure multiple raster tile sources and switch between them on the map, keeping your stops and routes. OpenStreetMap remains the default. See [map sources](docs/map-sources.md) for satellite, hybrid and self-hosted examples.
 
 ![The timeline beside the map, and a stop card with photo, rating, notes, address and links](docs/screenshots/popup.jpg)
 
@@ -49,6 +51,20 @@ Saved place details and routed legs travel with the note as hidden metadata. Syn
 
 Run **Insert day headings for a trip** to get the headings, then paste links under each. The full date on the heading is what makes weekday, opening-hours and departure checks possible. Indented lines under a stop are its notes. No frontmatter is needed. The complete format is in [FORMAT.md](skills/wayfarer-plan-trip/FORMAT.md). Imported Google Maps links need the updated Wayfarer on each device to appear on the map; older versions only recognize `geo:` stops. The original Maps links work as ordinary Markdown links outside the plugin.
 
+Enable **Convert Google links to geo links** (off by default) to import a coordinate link with the original Maps link beside it:
+
+```markdown
+- [Cafe](geo:35,139) [🗺️](https://maps.app.goo.gl/original)
+```
+
+This same-line pair is one stop. **Google Maps link label** chooses the text or emoji for new conversions (default `🗺️`, for example `Maps` or `(🗺️)`). The helper is recognized by its Google URL immediately after the geo link, independent of its label. Existing `([Google Maps](URL))` pairs remain supported, even if one or both outer parentheses are removed. Map cards and Reading view open the original source. Optional Google details are saved between the geo link and its helper, without duplicating coordinates. Existing pairs remain readable when this setting is off; changing settings does not rewrite notes. Prose, a newline or an intervening link separates independent links; an adjacent Google stop with its own saved coordinates remains independent unless explicitly wrapped as a source. Links with coordinates can resolve without a key; links containing only a place ID or name can still require one, and blocked short links may require the full Maps URL.
+
+**Store metadata in notes** is on by default. Turn it off to keep new Google details and routes only in memory for the current plugin session. This automatically enables geo conversion and prevents turning it off while storage is off. Reenabling storage leaves geo conversion enabled. Existing comments are still read and left as written, including during transport edits; no automatic migration or cleanup occurs.
+
+With storage off, imported facts and **Fetch Google details for stops without them** still feed map cards, photos, timeline and time checks. That command explicitly refreshes session details; identical concurrent requests are shared and failed requests pause before retrying. Reparsing or moving stops does not lose their facts. Restarting the plugin clears them; fetch again when online. Offline, the note's coordinates, times, text and straight-line connections remain usable. No replacement cache files or other persistent store are created for these facts. The API key remains in plugin settings as before. Existing inline rating/hours chips in Live Preview and Reading view show saved comments only; session-only details are shown in the map view.
+
+Fetched facts are snapshots of Google's response, not guaranteed live information. Routes and photos reuse session caches, and neither a redraw nor reopening a note refreshes everything. Existing saved comments may still show older facts; turning storage off does not remove them.
+
 ![Rating and hours chips after each link in Reading view](docs/screenshots/reading.jpg)
 
 ## Following the trip
@@ -68,6 +84,8 @@ These captures combine the real plugin renderer with reconstructed mobile host c
 ## Planning with an AI assistant
 
 The repo ships a skill that teaches an agent to plan a trip the way this plugin expects: intake, research (hours, closed days, transport, coordinates), day structure, the note itself, and a to-do list at the top of it holding every bed, seat and ticket still unbooked. With it, Claude Code, Codex or any agent that reads skills produces a complete plan you then review on the map.
+
+The skill consists of instructions (`SKILL.md`), the note format (`FORMAT.md`) and a worked example (`EXAMPLE.md`) for an external assistant. The Obsidian plugin works independently and does not run an AI model. Ask the assistant for portable Markdown to use verified geo/source pairs for a plan also read or shared through Nextcloud.
 
 Install it once, from a terminal:
 
@@ -94,7 +112,7 @@ The skill instructions and this README are written in English. Language support 
 
 ## Google API key
 
-Optional. Without a key you get pins from the link's coordinates and straight-line distances. With a key you also get place details, photos and routed legs. The key is yours, stored in this vault's `.obsidian/plugins/wayfarer/data.json` and never written into a note. Place details, photos and routes use Google's Places and Routes endpoints; expanding a short link downloads its Google Maps page. The plugin does not execute scripts from that page. Map tiles come from OpenStreetMap unless you set another tile URL.
+Optional. Without a key you get pins from the link's coordinates and straight-line distances. With a key you also get place details, photos and routed legs. The key is yours, stored in this vault's `.obsidian/plugins/wayfarer/data.json` and never written into a note. Place details, photos and routes use Google's Places and Routes endpoints; expanding a short link downloads its Google Maps page. The plugin does not execute scripts from that page. Map backgrounds use the configured raster sources, independently of this Google key; OpenStreetMap remains the default.
 
 1. In [Google Cloud Console](https://console.cloud.google.com/) create a project and enable billing (Google requires a card even for the free tier; set a budget alert).
 2. Enable **Places API (New)** and **Routes API**.

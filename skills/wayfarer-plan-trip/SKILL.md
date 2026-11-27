@@ -23,7 +23,7 @@ Do not stall on missing answers. Plan on stated assumptions and put each one in 
 
 For every candidate place:
 
-- **Coordinates.** From the place's Google Maps page (the `!3d…!4d…` pair in the URL, or the pin), 4 to 6 decimals. When you have the original Google Maps place URL, keep it in the note for the user to convert with **Convert every map link in this note** in Obsidian. Conversion keeps the original clickable place URL and saves coordinates separately. Use a `geo:` link when you have verified coordinates but no original place URL. Never guess numbers; never write a search URL (`?q=name`), it has no pin. If you cannot open the Maps page, take the pair from another source that publishes it (OpenStreetMap, Wikipedia, the venue's own site) and say so under `### Recheck before you go`. If you still cannot verify a place, do not make it a stop: name it in a recheck line and let the user paste its link.
+- **Coordinates.** From the place's Google Maps page (the `!3d…!4d…` pair in the URL, or the pin), 4 to 6 decimals. When both the pin and original place URL are verified, use `[Name](geo:lat,lng) [🗺️](original URL)` if the user wants portable Markdown/Nextcloud sharing or the existing note uses that format. Keep the source immediately after the geo link on the same line. Preserve existing labels and outer parentheses when revising a note; new imports can use the configured Google Maps link label. See [FORMAT.md](FORMAT.md). Otherwise keep the original place URL for **Convert every map link in this note**; conversion follows the user's import setting. Use a plain `geo:` link when no original place URL is available. Never guess numbers; never write a search URL (`?q=name`), it has no pin. If you cannot open the Maps page, take the pair from another source that publishes it (OpenStreetMap, Wikipedia, the venue's own site) and say so under `### Recheck before you go`. If you still cannot verify a place, do not make it a stop: name it in a recheck line and let the user paste its link.
 - **Opening days and hours, last entry, seasonal closure.** The single most common planning error is a museum, temple hall, shop or restaurant closed on the planned weekday. Check the weekday of every visit.
 - **Getting there and back.** Which bus or train, how often it runs, first and last departures that matter (last bus down the mountain, last ferry), whether a pass covers it, how long it takes.
 - **Time needed on site**, and the cost of tickets.
@@ -33,9 +33,10 @@ Prefer official sites and current timetables. Name a source only where the user 
 
 ## 3. Structure the days
 
+- Keep the configured day heading level (default `##`). Only when the user has enabled **Trip overview heading level**, parent headings can group days, for example `##` stages and `###` days. Put the stage's own city/base pins directly below its heading, then the daily headings. A parent hotel is optional in each day, not implicitly added to it. Preserve existing heading structure when revising a plan. See [Trip overview](../../docs/trip-overview.md).
 - Cluster by geography and by opening hours. A day's stops should be walkable or one transit ride apart.
 - Anchor each day on its fixed-time items (a departure, a reservation, a last entry) and fill around them, moving outward in the morning and back toward the night's hotel.
-- Give each day a theme in its heading (`## 2026-09-17 Thu Up to Senjogahara, sleep at Yumoto`) and make the night's hotel its last stop.
+- Give each day a theme in its heading (`## 2026-09-17 Thu Up to Senjogahara, sleep at Yumoto`). For a flat plan, make the night's hotel its last stop. With an overview, keep the base under its parent heading and repeat it in a day when that route needs it.
 - Four to six stops is a full day for most people. Leave slack after long transfers and before fixed times.
 - A stretch the user has not decided yet stays one range heading (`## 2026-09-19 ~ 2026-09-26 Tokyo`) with a line saying what is undecided. Do not invent a per-day schedule to fill it.
 - For any stretch with a real choice (this base or that one, mountain or coast, day trip or not), decide, and keep the runner-up as a written backup with the trigger that would switch to it (weather, a closure, a sold-out train).
@@ -77,6 +78,10 @@ Write in the user's language. Keep sentences short and concrete; the user reads 
 
 Keep the handback brief. Open the note with the Wayfarer map beside it; run **Convert every map link in this note** for any URLs you left. With a Google API key, **Fetch Google details for stops without them** adds hours and photos. It also checks your coordinates: a stop it reports as "not found at the pin" has no place of that name within 300 m, so its coordinates are probably wrong. Choose transport on the desktop timeline arrows or via **Change transport** in a stop’s details on mobile. Start with the to-do list, unbooked nights first. Point out red legs (two written times too close for the leg between them), "closed that day" chips, and what you could not confirm.
 
+For a metadata-free plan shared through another Markdown reader, write ordinary geo/source pairs and explain **Store metadata in notes**: turning it off requires geo conversion, leaves existing comments as written and keeps new Google facts only for the plugin session. Never put substitute API caches in YAML, sidecar files or hidden comments.
+
+Describe fetched details as snapshots, not guaranteed live data. With storage on, the details command fills missing details; with storage off, it explicitly requests session details again, subject to error backoff. Routes and photos reuse session caches, and reopening a note does not automatically refresh everything. A plugin restart clears session facts; existing saved comments may still contain older data. Keep uncertain or time-sensitive facts in the recheck checklist.
+
 ## Rules
 
 - Never write `%%wf:{…}%%` comments; the plugin owns them.
@@ -91,4 +96,4 @@ Keep the handback brief. Open the note with the Wayfarer map beside it; run **Co
 
 ## Revising an existing note
 
-Read the whole note first, the to-do checklist included. Keep the user's headings, order and wording. Add stops on new lines in the form above. When reordering a day, move whole lines (a stop's indented notes travel with it). When a place turns out closed or wrong, explain it and propose a replacement. If removing it from the schedule is authorized, move the original stop block with its notes and metadata into an undated planning section with the reason; strikethrough alone does not remove a geo link from the map. Update the to-do checklist in the same edit: a change that needs a new booking adds a line, and a booking the user says is done gets ticked.
+Read the whole note first, the to-do checklist included. Keep the user's headings, order and wording. Add stops on new lines in the form above. When reordering a day, move whole lines (a stop's indented notes travel with it). Keep each geo link with its Google source; do not convert or duplicate the source as another stop. When a place turns out closed or wrong, explain it and propose a replacement. If removing it from the schedule is authorized, move the original stop block with its notes and metadata into an undated planning section with the reason; strikethrough alone does not remove a geo link from the map. Update the to-do checklist in the same edit: a change that needs a new booking adds a line, and a booking the user says is done gets ticked.
