@@ -1,5 +1,17 @@
 # Wayfarer
 
+This is an experimental fork of [kevinsslin/wayfarer](https://github.com/kevinsslin/wayfarer).
+
+The combined source is on [`integration/all-features`](https://github.com/crispyduck00/wayfarer/tree/integration/all-features).
+Start with the [fork guide](https://github.com/crispyduck00/wayfarer/blob/integration/all-features/docs/fork.md),
+[two example notes](https://github.com/crispyduck00/wayfarer/tree/integration/all-features/examples)
+and [verification](https://github.com/crispyduck00/wayfarer/blob/integration/all-features/docs/verification/fork-review-2026-11-27.md).
+The features are proposed separately in upstream PRs #12–#16; #13 depends on #12.
+
+The code on `main` mirrors upstream 0.1.14. The original README below describes
+upstream installation; those release/directory links do not install the combined fork.
+For the fork, build the combined branch or use its supplied test package.
+
 **Plan with your AI agent in Markdown. Follow your trip on a map, right from your phone.**
 
 An Obsidian plugin with an optional AI planning skill and a mobile companion view.
