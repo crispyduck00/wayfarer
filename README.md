@@ -1,5 +1,17 @@
 # Wayfarer
 
+This is the combined development branch of a fork of
+[kevinsslin/wayfarer](https://github.com/kevinsslin/wayfarer).
+It adds portable note links, optional session metadata, a trip overview,
+multiple map backgrounds and a small card display fix.
+
+[Fork setup and PRs](docs/fork.md) · [Two example notes](examples/README.md) · [Verification](docs/verification/fork-review-2026-11-27.md)
+
+The community-directory and release links below install **upstream**, not this
+combined build. For the fork, build this branch or use its supplied test package.
+The plugin ID stays `wayfarer`; keep your existing `data.json` when replacing
+the three plugin files. An official update can replace a manually installed fork.
+
 **Plan with your AI agent in Markdown. Follow your trip on a map, right from your phone.**
 
 An Obsidian plugin with an optional AI planning skill and a mobile companion view.
