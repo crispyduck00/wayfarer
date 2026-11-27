@@ -65,7 +65,7 @@ async function metrics(name='Target'){
  return page.evaluate(name=>{
   const md=app.workspace.getLeavesOfType('markdown')[0].view,p=md.previewMode,r=p.containerEl,s=r.matches('.markdown-preview-view')?r:r.querySelector('.markdown-preview-view')??r;
   const a=[...r.querySelectorAll('a')].find(a=>a.textContent===name),b=a?.getBoundingClientRect(),v=s.getBoundingClientRect();
-  return{mode:md.getMode(),top:s.scrollTop,height:s.clientHeight,ratio:b&&b.height?((b.top+b.bottom)/2-v.top)/s.clientHeight:null,hiddenCursor:md.editor.getCursor()};
+  return{mode:md.getMode(),top:s.scrollTop,height:s.clientHeight,width:s.clientWidth,ratio:b&&b.height?((b.top+b.bottom)/2-v.top)/s.clientHeight:null,hiddenCursor:md.editor.getCursor()};
  },name);
 }
 async function waitTarget(){
@@ -115,7 +115,8 @@ try{
  navOk(m.mode==='preview'&&m.top<2,'line zero stays visible without a negative scroll position',m);
  await context.close();context=null;
  await launch(true);
- await page.evaluate(async()=>{app.workspace.rightSplit.collapse();const v=__basemapTest.first;await v.jumpTo(v.itinerary.stops.find(s=>s.name==='Target'));});
+ await page.evaluate(()=>{app.workspace.rightSplit.collapse();});await page.waitForTimeout(600);
+ await page.evaluate(async()=>{const v=__basemapTest.first;await v.jumpTo(v.itinerary.stops.find(s=>s.name==='Target'));});
  await waitTarget();await page.waitForTimeout(350);m=await metrics();
  navOk(m.mode==='preview','narrow touch Reading view uses the expected alignment',m);
  navOk(readFileSync(base+'/vault/Trip.md','utf8')===noteBefore,'navigation preserves Markdown byte for byte');
