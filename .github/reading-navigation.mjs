@@ -115,7 +115,8 @@ try{
  navOk(m.mode==='preview'&&m.top<2,'line zero stays visible without a negative scroll position',m);
  await context.close();context=null;
  await launch(true);
- await page.evaluate(()=>{app.workspace.rightSplit.collapse();});await page.waitForTimeout(600);
+ await page.evaluate(()=>{app.workspace.leftSplit.collapse();app.workspace.rightSplit.collapse();});await page.waitForTimeout(600);
+ await page.waitForFunction(()=>{const r=app.workspace.getLeavesOfType('markdown')[0].view.previewMode.containerEl,s=r.matches('.markdown-preview-view')?r:r.querySelector('.markdown-preview-view')??r;return s.clientWidth>300;});
  await page.evaluate(async()=>{const v=__basemapTest.first;await v.jumpTo(v.itinerary.stops.find(s=>s.name==='Target'));});
  await waitTarget();await page.waitForTimeout(350);m=await metrics();
  navOk(m.mode==='preview','narrow touch Reading view uses the expected alignment',m);
