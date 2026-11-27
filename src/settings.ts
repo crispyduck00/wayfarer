@@ -1,6 +1,8 @@
 import { googlePlaces, googleRoute } from "./net";
 import { Notice, PluginSettingTab, Setting, type App, type TextComponent, type ToggleComponent, type SettingDefinitionItem } from "obsidian";
 import type WayfarerPlugin from "./main";
+import { DEFAULT_MAP_SOURCE, type MapSource } from "./core/map-sources";
+import { MapSourcesModal } from "./ui/map-sources-modal";
 
 export interface WayfarerSettings {
   /** Google API key with Places API (New) and Routes API enabled. Without it: pins from the link only, no routes, no photos. */
@@ -15,6 +17,8 @@ export interface WayfarerSettings {
   listOpen: boolean;
   /** Headings at this level or shallower start a new day. */
   dayHeadingLevel: number;
+  /** Optional parent heading level for the trip overview; 0 keeps the existing flat plan. */
+  overviewHeadingLevel: number;
   /** Convert Google Maps links automatically on paste. */
   convertOnPaste: boolean;
   /** Import a geo link plus the original Google Maps link. */
@@ -30,6 +34,8 @@ export interface WayfarerSettings {
   /** Raster tile URL template. */
   tileUrl: string;
   tileAttribution: string;
+  mapSources: MapSource[];
+  defaultMapSource: string;
   /** Draw a line through each day's stops in order. */
   drawRoutes: boolean;
   /** Open the map pane when a note with stops becomes active. */
@@ -43,14 +49,17 @@ export const DEFAULT_SETTINGS: WayfarerSettings = {
   listWidth: 260,
   listOpen: true,
   dayHeadingLevel: 2,
+  overviewHeadingLevel: 0,
   convertOnPaste: true,
   googleToGeo: false,
   googleLinkLabel: "🗺️",
   storeMetadata: true,
   addEmoji: true,
   followCursor: true,
-  tileUrl: "https://tile.openstreetmap.org/{z}/{x}/{y}.png",
-  tileAttribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
+  tileUrl: DEFAULT_MAP_SOURCE.url,
+  tileAttribution: DEFAULT_MAP_SOURCE.attribution,
+  mapSources: [DEFAULT_MAP_SOURCE],
+  defaultMapSource: DEFAULT_MAP_SOURCE.id,
   drawRoutes: true,
   autoOpen: true,
 };
@@ -72,6 +81,8 @@ const GOOGLE_LANGUAGE_DESC = "By default, follow your interface language (Obsidi
 const KEY_DESC = "Your own key. It unlocks exact pins with ratings, opening hours and photos, and routes between stops (walking, cycling, driving and transit with line names). Without it the plugin still reads pins from pasted links, and legs show their distance only. Stored in this vault's plugin data, never in a note. ";
 const AGENT_DESC = "Teaches an AI coding agent to research a trip and write the note in the format this plugin reads, planning notes included. ";
 const GOOGLE_LABEL_DESC = "Text or emoji for the Google Maps link beside a geo link. Default 🗺️. Applies to new conversions.";
+const OVERVIEW_DESC = "Optional parent headings for the overall route. Must be shallower than days, for example ## stages and ### days. Off keeps the existing flat plan.";
+const OVERVIEW_LEVELS = { 0: "Off", 1: "#", 2: "##", 3: "###" };
 
 function keyDesc(): DocumentFragment {
   return createFragment((f) => {
@@ -128,9 +139,9 @@ export class WayfarerSettingTab extends PluginSettingTab {
         heading: "Advanced",
         items: [
           { name: "Heading level that starts a day", desc: "Default ## . If the note has none at this level, larger headings count.", control: { type: "dropdown", key: "dayHeadingLevel", options: { 1: "#", 2: "##", 3: "###", 4: "####" } } },
+          { name: "Trip overview heading level", desc: OVERVIEW_DESC, control: { type: "dropdown", key: "overviewHeadingLevel", options: OVERVIEW_LEVELS } },
           { name: "Draw lines between places", control: { type: "toggle", key: "drawRoutes" } },
-          { name: "Map tiles URL", control: { type: "text", key: "tileUrl" } },
-          { name: "Map tiles attribution", control: { type: "text", key: "tileAttribution" } },
+          { name: "Map sources", desc: "Configure raster tile backgrounds and their default.", aliases: ["tiles", "satellite", "basemap"], render: (setting) => this.renderMapSources(setting) },
         ],
       },
     ];
@@ -143,11 +154,15 @@ export class WayfarerSettingTab extends PluginSettingTab {
 
   async setControlValue(key: string, value: unknown): Promise<void> {
     const s = this.plugin.settings as unknown as Record<string, unknown>;
-    if (key === "dayHeadingLevel") s[key] = Number(value);
+    if (key === "dayHeadingLevel" || key === "overviewHeadingLevel") s[key] = Number(value);
     else if (key === "tileUrl") s[key] = String(value).trim() || DEFAULT_SETTINGS.tileUrl;
     else if (key === "languageCode") s[key] = String(value).trim() || "auto";
     else s[key] = value;
     normalizeSettings(this.plugin.settings);
+    if (key === "tileUrl" || key === "tileAttribution") {
+      const source = this.plugin.settings.mapSources.find((m) => m.id === this.plugin.settings.defaultMapSource);
+      if (source) source[key === "tileUrl" ? "url" : "attribution"] = String(s[key]);
+    }
     this.geoToggle?.setValue(this.plugin.settings.googleToGeo).setDisabled(!this.plugin.settings.storeMetadata);
     await this.plugin.saveSettings();
     if (key === "uiLanguage") this.plugin.applyLocale();
@@ -161,6 +176,10 @@ export class WayfarerSettingTab extends PluginSettingTab {
       this.geoToggle = t;
       t.setValue(s.googleToGeo).setDisabled(!s.storeMetadata).onChange((v) => { void this.setControlValue("googleToGeo", v); });
     });
+  }
+
+  private renderMapSources(setting: Setting): void {
+    setting.addButton((b) => b.setButtonText("Manage map sources").onClick(() => new MapSourcesModal(this.plugin).open()));
   }
 
   private renderGoogleLanguage(setting: Setting): void {
@@ -284,13 +303,15 @@ export class WayfarerSettingTab extends PluginSettingTab {
         d.setValue(String(s.dayHeadingLevel)).onChange((v) => { s.dayHeadingLevel = Number(v); save(); this.plugin.refresh(); });
       });
     new Setting(containerEl)
+      .setName("Trip overview heading level")
+      .setDesc(OVERVIEW_DESC)
+      .addDropdown((d) => {
+        for (const [level, label] of Object.entries(OVERVIEW_LEVELS)) d.addOption(level, label);
+        d.setValue(String(s.overviewHeadingLevel)).onChange((v) => { s.overviewHeadingLevel = Number(v); save(); this.plugin.refresh(); });
+      });
+    new Setting(containerEl)
       .setName("Draw lines between places")
       .addToggle((t) => t.setValue(s.drawRoutes).onChange((v) => { s.drawRoutes = v; save(); this.plugin.refresh(); }));
-    new Setting(containerEl)
-      .setName("Map tiles URL")
-      .addText((t) => t.setValue(s.tileUrl).onChange((v) => { s.tileUrl = v.trim() || DEFAULT_SETTINGS.tileUrl; save(); this.plugin.refresh(); }));
-    new Setting(containerEl)
-      .setName("Map tiles attribution")
-      .addText((t) => t.setValue(s.tileAttribution).onChange((v) => { s.tileAttribution = v; save(); this.plugin.refresh(); }));
+    this.renderMapSources(new Setting(containerEl).setName("Map sources").setDesc("Configure raster tile backgrounds and their default."));
   }
 }

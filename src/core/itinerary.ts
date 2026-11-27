@@ -79,6 +79,8 @@ export interface Stop {
   transport?: Transport;
   /** The line's prose with links reduced to their names and markup removed. */
   note: string;
+  /** Card prose without this place's link label; the original prose is kept for exports. */
+  description?: string;
   /** Indented lines right under the stop, verbatim: the user's notes for it. */
   notes: string[];
   /** Image on the same line or the line after: a vault `![[file]]` link or a URL. */
@@ -86,6 +88,8 @@ export interface Stop {
   /** Index within its day, zero-based. */
   index: number;
   dayIndex: number;
+  /** This source stop belongs to the optional overview projection. */
+  overview?: true;
 }
 
 export interface Day {
@@ -113,6 +117,8 @@ export interface Itinerary {
   days: Day[];
   /** Every stop in document order. */
   stops: Stop[];
+  /** Direct stops under the configured parent headings, kept separate from daily routes. */
+  overview?: Itinerary;
 }
 
 export interface ParseOptions {
@@ -122,6 +128,8 @@ export interface ParseOptions {
    * level, any heading up to it counts, so a note written with `#` days works.
    */
   maxHeadingLevel?: number;
+  /** Optional overview heading level, strictly shallower than the day level. Off by default. */
+  overviewHeadingLevel?: number;
 }
 
 import { isGoogleMapsUrl, isValidLatLng } from "./gmaps-url";
@@ -138,14 +146,27 @@ const IMAGE = /!\[\[([^\]|]+)(?:\|[^\]]*)?\]\]|!\[[^\]]*\]\((\S+?)\)/;
 
 export function parseItinerary(markdown: string, opts: ParseOptions = {}): Itinerary {
   const maxLevel = opts.maxHeadingLevel ?? 2;
+  const overviewLevel = opts.overviewHeadingLevel ?? 0;
+  const layered = Number.isInteger(overviewLevel) && overviewLevel > 0 && overviewLevel < maxLevel && maxLevel <= 6;
+  const itinerary = parseLayer(markdown, maxLevel, layered);
+  if (layered) {
+    itinerary.overview = parseLayer(markdown, overviewLevel, true, true);
+    for (const stop of itinerary.overview.stops) stop.overview = true;
+  }
+  return itinerary;
+}
+
+/** With bounded sections, shallower headings close a day; direct sections exclude all child headings. */
+function parseLayer(markdown: string, maxLevel: number, bounded = false, direct = false): Itinerary {
   const lines = markdown.split("\n");
   const visible = visibleLines(lines);
-  const hasExact = headingLevels(visible.text).has(maxLevel);
+  const hasExact = bounded || headingLevels(visible.text).has(maxLevel);
   const isDayHeading = (level: number) => (hasExact ? level === maxLevel : level <= maxLevel);
   const days: Day[] = [];
   let current: Day = { title: "", headingLine: -1, endLine: lines.length, stops: [], index: -1, label: "", date: null, dateEnd: null };
   // Indent of the last stop line; deeper lines right under it are its notes, whatever they contain.
   let noteBase: number | null = null;
+  let accepting = !bounded;
 
   for (let i = 0; i < lines.length; i++) {
     const raw = lines[i];
@@ -156,13 +177,17 @@ export function parseItinerary(markdown: string, opts: ParseOptions = {}): Itine
     if (!raw.trim()) noteBase = null;
 
     const h = HEADING.exec(prose);
-    if (h && isDayHeading(h[1].length)) {
+    if (h && (isDayHeading(h[1].length) || (bounded && h[1].length < maxLevel))) {
       current.endLine = i;
       days.push(current);
-      current = { title: h[2], headingLine: i, endLine: lines.length, stops: [], index: -1, label: dayLabel(h[2]), date: dayDate(h[2]), dateEnd: dayDateEnd(h[2]) };
+      accepting = isDayHeading(h[1].length);
+      const title = accepting ? h[2] : "";
+      current = { title, headingLine: i, endLine: lines.length, stops: [], index: -1, label: dayLabel(title), date: dayDate(title), dateEnd: dayDateEnd(title) };
       noteBase = null;
       continue;
     }
+    if (bounded && direct && h) { accepting = false; noteBase = null; }
+    if (!accepting) continue;
     const indent = indentWidth(line);
     if (noteBase !== null && indent > noteBase) continue;
     noteBase = null;
@@ -170,7 +195,10 @@ export function parseItinerary(markdown: string, opts: ParseOptions = {}): Itine
     let prevEnd = 0;
     const time = TIME.exec(line)?.[1];
     let image: RegExpExecArray | null | undefined;
-    for (const link of stopLinks(line)) {
+    const links = stopLinks(line);
+    if (!links.length) continue;
+    const note = plainNote(prose);
+    for (const link of links) {
       const { lat, lng, meta } = link;
       noteBase = indent;
       if (image === undefined) image = IMAGE.exec(line) ?? imageBelow(lines, i, visible.bare);
@@ -193,7 +221,9 @@ export function parseItinerary(markdown: string, opts: ParseOptions = {}): Itine
         time,
         // The emoji in the text is what everyone reads, so it wins; `via` is only read from older notes.
         transport: transportEmoji(before) ?? meta?.via ?? undefined,
-        note: plainNote(prose),
+        note,
+        // Keep multi-place sentences intact; a single place already has its own card title.
+        description: links.length === 1 ? cardDescription(prose, link, time) : undefined,
         notes: continuationLines(lines, i, visible.text),
         image: image ? (image[1] ?? image[2]) : undefined,
         index: current.stops.length,
@@ -454,6 +484,19 @@ export function plainNote(line: string): string {
     .replace(/^\p{Extended_Pictographic}(?:️|‍\p{Extended_Pictographic})*\s*/u, "");
 }
 
+/** Remove only this standalone link label and its leading time/emoji decoration. */
+function cardDescription(line: string, link: StopLink, time?: string): string | undefined {
+  // A label joined to a word (e.g. [Fort](geo:...)ress) is part of that word.
+  if (/[\p{L}\p{N}\p{M}]/u.test((line[link.from - 1] ?? "") + (line[link.to] ?? ""))) return undefined;
+  let before = plainNote(line.slice(0, link.from));
+  if (time) before = before.replace(time, " ");
+  before = before.replace(/\s+/g, " ").trim().replace(/^(?:[\p{Extended_Pictographic}\p{Emoji_Modifier}\uFE0F\u200D]\s*)+/u, "");
+  // A temporary label keeps the link/source pair recognizable and protects the
+  // description's own leading emoji. It is removed before returning the prose.
+  const after = plainNote(line.slice(link.from).replace(/^\[[^\]]*\]/, "[.]")).slice(1).trim();
+  return [before, after].filter(Boolean).join(" ");
+}
+
 /** Which day (by index) contains the given zero-based line, or -1. */
 export function dayAtLine(it: Itinerary, line: number): number {
   for (const d of it.days) {
@@ -694,11 +737,12 @@ function round(n: number): string {
 }
 
 /**
- * The user's notes for a stop, verbatim: its line as prose (time removed,
- * the place name kept where it was written), then the indented lines under
- * it. A line that is nothing but the name adds nothing.
+ * The stop's prose followed by its indented notes. Cards omit the place's
+ * standalone link label, since their heading shows it, and leading time/emoji.
+ * Exports keep the original prose. Never change the parsed stop or notes.
  */
-export function stopNotes(stop: Stop): string[] {
+export function stopNotes(stop: Stop, forCard = false): string[] {
+  if (forCard && stop.description !== undefined) return stop.description ? [stop.description, ...stop.notes] : [...stop.notes];
   let line = stop.note;
   if (stop.time) line = line.replace(stop.time, " ");
   line = line.replace(/\s+/g, " ").trim();
