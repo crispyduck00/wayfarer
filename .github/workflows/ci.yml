@@ -1,15 +1,23 @@
-name: CI
+name: Reading navigation verification
 
 on:
-  push:
-    branches: [main]
   pull_request:
 
+permissions:
+  contents: write
+
 jobs:
-  build:
+  check:
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        ref: ["eed8cf79fb2c103ba7e7cf65d7345453472a4385", "1fc1b8a325f81613f57a6f390d6e34c97707c7a1"]
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ matrix.ref }}
+          fetch-depth: 0
       - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v4
         with:
@@ -17,3 +25,70 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm check
+
+  native:
+    needs: check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: pnpm
+      - name: Prepare official desktop renderer
+        shell: bash
+        run: |
+          set -euo pipefail
+          export NATIVE_DEPS="$RUNNER_TEMP/native-deps"
+          export UI_OUTPUT="$RUNNER_TEMP/native-results"
+          export OBSIDIAN_BIN="$RUNNER_TEMP/obsidian-desktop/obsidian-1.15.1/obsidian"
+          echo "NATIVE_DEPS=$NATIVE_DEPS" >> "$GITHUB_ENV"
+          echo "UI_OUTPUT=$UI_OUTPUT" >> "$GITHUB_ENV"
+          echo "OBSIDIAN_BIN=$OBSIDIAN_BIN" >> "$GITHUB_ENV"
+          pnpm install --frozen-lockfile
+          npm install --prefix "$NATIVE_DEPS" --no-save playwright@1.56.1
+          sudo apt-get update -qq
+          sudo apt-get install -y libgtk-3-0t64 libnss3 libasound2t64 libgbm1 libxss1
+          mkdir -p "$RUNNER_TEMP/obsidian-desktop" "$UI_OUTPUT"
+          curl -fLsS --retry 2 https://github.com/obsidianmd/obsidian-releases/releases/download/v1.15.1/obsidian-1.15.1.tar.gz -o "$RUNNER_TEMP/obsidian.tar.gz"
+          tar -xzf "$RUNNER_TEMP/obsidian.tar.gz" -C "$RUNNER_TEMP/obsidian-desktop"
+      - name: Reading baseline and centered source navigation
+        shell: bash
+        run: |
+          set -euo pipefail
+          for entry in baseline:dd5c438de7bc4cb27988286e6aea967fab8a6173 overview:eed8cf79fb2c103ba7e7cf65d7345453472a4385 combined:1fc1b8a325f81613f57a6f390d6e34c97707c7a1; do
+            name="${entry%%:*}"
+            ref="${entry#*:}"
+            source_dir="$RUNNER_TEMP/reading-$name"
+            git worktree add --detach "$source_dir" "$ref"
+            ln -s "$GITHUB_WORKSPACE/node_modules" "$source_dir/node_modules"
+            pnpm --dir "$source_dir" build > "$UI_OUTPUT/build-$name.log" 2>&1
+            node .github/reading-navigation.mjs "$source_dir" "$name" 2>&1 | tee "$UI_OUTPUT/$name.log"
+          done
+      - name: Preserve navigation evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          evidence="$RUNNER_TEMP/navigation-evidence"
+          git worktree add --detach "$evidence" HEAD
+          mkdir -p "$evidence/native-reading"
+          cp .github/reading-navigation.mjs "$evidence/native-reading/test.mjs"
+          for name in baseline overview combined; do
+            cp "$UI_OUTPUT/$name/result.json" "$evidence/native-reading/$name.json"
+          done
+          cp "$UI_OUTPUT/combined/reading-navigation.png" "$evidence/native-reading/reading-navigation.png"
+          git -C "$evidence" config user.name 'github-actions[bot]'
+          git -C "$evidence" config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git -C "$evidence" add native-reading
+          git -C "$evidence" commit -m 'Record Reading alignment, folding, pin and touch navigation checks'
+          git -C "$evidence" push --force-with-lease origin HEAD:refs/heads/validation/reading-center-evidence
+          git -C "$evidence" rev-parse HEAD
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: Wayfarer-Reading-navigation
+          path: ${{ runner.temp }}/native-results/
+          if-no-files-found: error
