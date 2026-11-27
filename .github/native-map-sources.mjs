@@ -49,7 +49,7 @@ const modal=()=>editorPage.locator('.modal').filter({has:editorPage.getByRole('h
 const row=name=>modal().locator('.setting-item').filter({has:editorPage.locator('.setting-item-name').filter({hasText:new RegExp('^'+name+'$')})});
 async function openEditor(){
  await page.evaluate(()=>{app.setting.open();app.setting.openTabById('wayfarer');});
- for(let i=0;i<50;i++){const owners=await Promise.all(context.pages().map(async p=>await p.getByRole('button',{name:'Manage map sources',exact:true}).count()?p:null)),settings=owners.find(Boolean);if(settings){await settings.getByRole('button',{name:'Manage map sources',exact:true}).click();break;}await page.waitForTimeout(100);}
+ for(let i=0;i<50;i++){const owners=await Promise.all(context.pages().map(async p=>await p.getByRole('button',{name:'Manage map sources',exact:true}).count()?p:null)),settings=owners.find(Boolean);if(settings){await settings.setViewportSize(touchMode?{width:412,height:915}:{width:900,height:1100});await settings.getByRole('button',{name:'Manage map sources',exact:true}).click();break;}await page.waitForTimeout(100);}
  for(let i=0;i<50;i++){const owners=await Promise.all(context.pages().map(async p=>await p.getByRole('heading',{name:'Map sources',exact:true}).count()?p:null));editorPage=owners.find(Boolean);if(editorPage){if(touchMode)await editorPage.setViewportSize({width:412,height:915});return;}await page.waitForTimeout(100);}
  throw Error('Map-source settings did not open');
 }
@@ -106,5 +106,5 @@ try{
   ok(readFileSync(base+'/vault/Trip.md','utf8')===noteBefore,'Markdown remains byte-identical');ok(pageErrors.length===0,'no renderer errors during source scenarios');
   const report={version:'1.15.1',label,checks,requests:requests.length,pageErrors,scope:'Unmodified official desktop application/renderer, headless; deterministic tiles/errors/offline, narrow desktop touch emulation, not physical Android.'};writeFileSync(output+'/result.json',JSON.stringify(report,null,2)+'\n');console.log(JSON.stringify(report));
  }
-}catch(e){console.error(e.stack??String(e));process.exitCode=1;try{await page.screenshot({path:output+'/failure.png'});console.log(await page.locator('body').innerText());}catch{}}
+}catch(e){console.error(e.stack??String(e));process.exitCode=1;try{await page.screenshot({path:output+'/failure.png'});console.log(await page.locator('body').innerText());for(const [i,p] of (context?.pages()??[]).entries()){console.log('Window diagnostic',i,await p.evaluate(()=>({url:location.href,inner:[innerWidth,innerHeight],body:document.body.getBoundingClientRect().toJSON(),buttons:[...document.querySelectorAll('button')].filter(b=>b.textContent==='Manage map sources').map(b=>b.getBoundingClientRect().toJSON())})));await p.screenshot({path:output+'/failure-window-'+i+'.png'}).catch(()=>{});}}catch{}}
 finally{await context?.close();}
