@@ -60,9 +60,22 @@ class ItemViewStub extends Component {
 }
 class PluginSettingTabStub { constructor(app, plugin) { this.app = app; this.plugin = plugin; this.containerEl = fakeEl(); } }
 const chain = () => new Proxy(() => chain(), { get: () => chain() });
+const settingTexts = [];
+const settingToggles = [];
+class ToggleStub {
+  setValue(value) { this.value = value; return this; }
+  setDisabled(disabled) { this.disabled = disabled; return this; }
+  onChange(fn) { this.change = fn; return this; }
+}
 class SettingStub {
-  setName() { return this; } setDesc() { return this; } setHeading() { return this; }
-  addToggle(cb) { cb(chain()); return this; } addDropdown(cb) { cb(chain()); return this; } addText(cb) { cb(chain()); return this; }
+  setName(name) { this.name = name; return this; } setDesc() { return this; } setHeading() { return this; }
+  addToggle(cb) { const toggle = new ToggleStub(); cb(toggle); settingToggles.push({ name: this.name, toggle }); return this; }
+  addDropdown(cb) { cb(chain()); return this; }
+  addText(cb) {
+    const text = { name: this.name, inputEl: { setAttribute() {} }, setPlaceholder() { return this; }, setValue(v) { this.value = v; return this; }, onChange(fn) { this.change = fn; return this; } };
+    settingTexts.push(text); cb(text); return this;
+  }
+  addButton(cb) { cb(chain()); return this; }
 }
 
 let obsidianLanguage = "en";
@@ -79,6 +92,7 @@ const obsidianStub = {
   MarkdownView: class {},
   TFile: class {},
   Platform: { isMobile: false, isDesktopApp: true },
+  setIcon() {},
   WorkspaceLeaf: class {},
   debounce: (fn) => Object.assign(fn, { cancel: () => { debounceCancellations++; } }),
   normalizePath: (path) => path.replace(/\\/g, "/").replace(/\/+/g, "/").replace(/^\/|\/$/g, ""),
@@ -111,6 +125,7 @@ globalThis.document = {
 };
 Object.defineProperty(globalThis, "navigator", { value: { userAgent: "node", platform: "node", maxTouchPoints: 0 }, configurable: true });
 globalThis.ResizeObserver = class { observe() {} disconnect() {} };
+globalThis.createFragment = (cb) => { const f = { appendText() {}, createEl() {} }; cb(f); return f; };
 // Another plugin's Leaflet (Map View with Geoman attached) already owns the global.
 const otherLeaflet = { PM: { optIn: false } };
 globalThis.L = otherLeaflet;
@@ -448,6 +463,477 @@ md.getMode = () => "source";
 }
 app.vault = deferredVault;
 console.log("smoke: OK (stale drags, renamed stops, duplicate legs and link copies)");
+
+// Geo imports are ordinary links; helpers are never converted again, including
+// after the option is disabled. Exercise actual editor writes and renderers.
+assert(plugin.settings.googleToGeo === false, "geo imports default off for old settings");
+assert(plugin.settings.googleLinkLabel === "🗺️", "old settings receive the compact default label");
+assert(plugin.settingTabs[0].getSettingDefinitions().some((s) => s.control?.key === "googleLinkLabel"), "label is available in declarative settings");
+plugin.settingTabs[0].display();
+const labelInput = settingTexts.find((s) => s.name === "Google Maps link label");
+assert(labelInput?.value === "🗺️", "legacy settings render the same label default");
+labelInput.change("GMaps");
+assert(plugin.settings.googleLinkLabel === "GMaps" && plugin.savedData.googleLinkLabel === "GMaps", "legacy label control saves the preference");
+await plugin.settingTabs[0].setControlValue("googleLinkLabel", "🗺️");
+await plugin.settingTabs[0].setControlValue("googleToGeo", true);
+for (const apiKey of ["", "smoke-key"]) {
+  plugin.settings.googleApiKey = apiKey;
+  md.getMode = () => "source";
+  let requests = 0;
+  obsidianStub.requestUrl = async () => { requests++; return details; };
+  const url = "https://www.google.com/maps/place/Hotel/data=!3d35!4d139";
+  openNote("A.md", `## 2027-01-01\n- 09:00 🚲 🏨 [My $& hotel](${url}) book ahead\n    Bring cash`);
+  const original = source;
+  const edits = [];
+  const replace = md.editor.replaceRange;
+  md.editor.replaceRange = (...args) => { edits.push(source); replace(...args); };
+  await plugin.convertAll(md.editor);
+  md.editor.replaceRange = replace;
+  plugin.refresh();
+  const stop = plugin.current.itinerary.stops[0];
+  assert(plugin.current.itinerary.stops.length === 1 && stop.googleUrl === url && !stop.url, "geo pair has one stop with a distinct Google source");
+  assert(source.includes(`[My $& hotel](geo:35,139)`) && source.includes(`[🗺️](${url})`), "geo conversion preserves name and exact source URL");
+  assert(source.startsWith("## 2027-01-01\n- 09:00 🚲 🏨 ") && source.endsWith("book ahead\n    Bring cash"), "geo conversion keeps time, transport, category and prose");
+  assert(!source.includes('"lat"') && !source.includes('"locationUrl"'), "geo coordinates are not duplicated in metadata");
+  if (apiKey) assert(stop.meta?.rating === 4.5 && source.indexOf("%%wf:") < source.indexOf("[🗺️]"), "optional facts belong to the geo link before the source");
+  const converted = source, count = requests;
+  await plugin.convertAll(md.editor);
+  plugin.settings.googleToGeo = false;
+  await plugin.convertAll(md.editor);
+  assert(source === converted && requests === count, "repeated conversion skips helpers even with import option off");
+  assert(edits.length === 1 && edits[0] === original, "conversion is one editor edit, so undo can restore the input");
+  source = converted.replace("[🗺️]", "[Karte]");
+  await plugin.convertAll(md.editor);
+  assert(requests === count && plugin.current.itinerary.stops[0].googleUrl === url, "helper detection does not depend on its label");
+  const geoAnchor = {
+    textContent: "My $& hotel", attrs: { href: "geo:35,139" },
+    getAttribute(key) { return this.attrs[key]; }, setAttribute(key, value) { this.attrs[key] = value; },
+    setAttr(key, value) { this.attrs[key] = value; }, addClass() {}, insertAdjacentElement() {},
+  };
+  plugin.postProcessors[0]({ querySelectorAll: () => [geoAnchor] }, { getSectionInfo: () => ({ text: source, lineStart: 0, lineEnd: 2 }) });
+  assert(geoAnchor.attrs.href === url, "Reading view opens a geo pair's original Google source");
+  // A separate unresolved Maps stop on the same line must still convert.
+  source += `\n- [Park](geo:36,140) ([Map](https://maps.app.goo.gl/park)) and ${url}`;
+  plugin.settings.googleToGeo = true;
+  await plugin.convertAll(md.editor);
+  plugin.refresh();
+  assert(plugin.current.itinerary.stops.length === 3 && (source.match(/\[🗺️\]/g) ?? []).length === 1, "paired sources are skipped while adjacent unconverted links are imported");
+}
+for (const label of ["(🗺️)", "Maps", "地圖", "", "bad]\n[link`%%"]) {
+  await plugin.settingTabs[0].setControlValue("googleLinkLabel", label);
+  plugin.settings.googleApiKey = "";
+  plugin.settings.googleToGeo = true;
+  const url = "https://www.google.com/maps/place/Hotel/data=!3d35!4d139";
+  openNote("A.md", `## 2027-01-01\n- ${url}`);
+  await plugin.convertAll(md.editor);
+  plugin.refresh();
+  assert(plugin.current.itinerary.stops.length === 1 && plugin.current.itinerary.stops[0].googleUrl === url, "custom label remains one valid source pair");
+  assert(source.split("\n").length === 2, "label cannot add a line or break the link");
+  const converted = source;
+  await plugin.convertAll(md.editor);
+  assert(source === converted, "custom label source is not converted again");
+}
+await plugin.settingTabs[0].setControlValue("googleLinkLabel", "🗺️");
+for (const [left, right] of [["(", ")"], ["(", ""], ["", ")"], ["", ""]]) {
+  const url = "https://maps.app.goo.gl/legacy";
+  const legacy = `## 2027-01-01\n- [Hotel](geo:35,139) ${left}[Google Maps](${url})${right} book ahead`;
+  openNote("A.md", legacy);
+  await plugin.convertAll(md.editor);
+  assert(source === legacy && plugin.current.itinerary.stops[0].googleUrl === url, "old pair survives missing outer parentheses and repeat conversion");
+}
+plugin.settings.googleToGeo = false;
+plugin.settings.googleApiKey = "smoke-key";
+console.log("smoke: OK (geo imports, named links, exact pins, source pairs, repeat conversion and atomic edits)");
+
+// All persistence paths are exercised with successful mocked responses. Turning
+// storage off must still leave the in-memory itinerary useful to existing UIs.
+assert(plugin.settings.storeMetadata === true, "old settings keep metadata storage on");
+plugin.loadData = async () => ({ googleToGeo: false, storeMetadata: false, autoOpen: false });
+await plugin.loadSettings();
+assert(plugin.settings.googleToGeo && !plugin.settings.storeMetadata, "invalid stored off/off settings normalize on load");
+const settingsTab = plugin.settingTabs[0];
+await settingsTab.setControlValue("googleToGeo", false);
+assert(plugin.settings.googleToGeo && !plugin.savedData.storeMetadata, "declarative setter cannot reenable persistence implicitly");
+globalThis.createFragment = (fn) => { const fragment = { appendText() {}, createEl() {} }; fn(fragment); return fragment; };
+settingsTab.display();
+const geoToggle = settingToggles.findLast((s) => s.name === "Convert Google links to geo links").toggle;
+const metadataToggle = settingToggles.findLast((s) => s.name === "Store metadata in notes").toggle;
+assert(geoToggle.value && geoToggle.disabled, "legacy settings UI shows required geo conversion disabled");
+metadataToggle.change(true);
+assert(plugin.settings.storeMetadata && geoToggle.value && !geoToggle.disabled, "reenabling storage leaves geo conversion on in legacy UI");
+metadataToggle.change(false);
+assert(!plugin.settings.storeMetadata && geoToggle.disabled, "legacy storage switch disables geo switch");
+const geoDefinition = settingsTab.getSettingDefinitions().find((s) => s.name === "Convert Google links to geo links");
+geoDefinition.render(new SettingStub().setName(geoDefinition.name));
+assert(settingToggles.at(-1).toggle.disabled && settingsTab.getControlValue("googleToGeo"), "declarative UI uses the same dependency and value");
+plugin.settings.googleApiKey = "session-key";
+const sessionDetails = { status: 200, json: { places: [{ ...details.json.places[0], regularOpeningHours: { weekdayDescriptions: ["Friday: 9:00 AM – 5:00 PM"] }, photos: [{ name: "places/smoke/photos/1" }], utcOffsetMinutes: 540 }] } };
+const sourceUrl = "https://www.google.com/maps/place/Hotel/data=!3d35!4d139";
+plugin.settings.googleApiKey = "";
+md.getMode = () => "source";
+obsidianStub.requestUrl = async () => ({ status: 200, text: `<link rel="canonical" href="${sourceUrl}">` });
+openNote("Keyless.md", "## 2027-01-01\n- https://maps.app.goo.gl/keyless");
+await plugin.convertAll(md.editor);
+assert(source.includes("geo:35,139") && source.includes("goo.gl/keyless") && !source.includes("%%wf:"), "keyless short URL resolves to a durable geo pair without metadata");
+const idOnly = "https://www.google.com/maps/search/?api=1&query_place_id=ChIJunknown";
+openNote("Keyless.md", `## 2027-01-01\n- ${idOnly}`);
+const unresolved = source;
+await plugin.convertAll(md.editor);
+assert(source === unresolved, "a keyless ID-only URL stays untouched rather than inventing a pin");
+obsidianStub.requestUrl = async () => { throw new Error("offline"); };
+openNote("Offline.md", "## 2027-01-01\n- https://maps.app.goo.gl/offline");
+const offline = source;
+await plugin.convertAll(md.editor);
+assert(source === offline, "offline import failure keeps the original text");
+plugin.settings.googleApiKey = "session-key";
+for (const mode of ["source", "preview"]) {
+  md.getMode = () => mode;
+  obsidianStub.requestUrl = async () => sessionDetails;
+  const initial = `## 2027-01-01\n- 09:00 🚶 [My hotel](${sourceUrl}) book ahead`;
+  openNote("Session.md", initial);
+  assert(await plugin.convert(md.editor, 1, sourceUrl, "- 09:00 🚶 [My hotel]("), `${mode}: import works with storage off`);
+  assert(source.includes("geo:35,139") && !source.includes("%%wf:"), `${mode}: import saves only ordinary links`);
+  plugin.refresh();
+  let stop = plugin.current.itinerary.stops[0];
+  assert(stop.meta?.rating === 4.5 && stop.meta?.photo && stop.meta.utc === 540, `${mode}: imported facts survive reparsing in RAM`);
+  const unchanged = source;
+  let asked = 0;
+  obsidianStub.requestUrl = async () => { asked++; return sessionDetails; };
+  await Promise.all([plugin.fetchDetails(), plugin.fetchDetails()]);
+  assert(asked === 1 && source === unchanged, `${mode}: concurrent details commands share a request without writing`);
+  source = source.replace("## 2027-01-01\n", "## 2027-01-01\nCall ahead\n");
+  plugin.refresh();
+  stop = plugin.current.itinerary.stops[0];
+  assert(stop.meta?.rating === 4.5 && stop.line === 2, `${mode}: session identity survives moving the stop`);
+  const withComment = source.replace("[My hotel](geo:35,139)", '[My hotel](geo:35,139) %%wf:{"via":"train","rating":3.2,"custom":"keep  spaces"}%%');
+  openNote("Session.md", withComment);
+  stop = plugin.current.itinerary.stops[0];
+  plugin.setStopMeta(stop, { rating: 1 });
+  assert(source === withComment, `${mode}: direct metadata writes are blocked`);
+  plugin.setStopTransport(stop, "bike");
+  assert(source.includes('%%wf:{"via":"train","rating":3.2,"custom":"keep  spaces"}%%'), `${mode}: transport edits preserve existing comments byte for byte`);
+}
+openNote("Legacy.md", '## 2027-01-01\n- [Old](geo:35,139) %%wf:{"rating":3.2,"placeId":"legacy"}%%');
+assert(plugin.current.itinerary.stops[0].meta.rating === 3.2, "existing comments remain readable with storage off");
+
+// A stale imported Google href may be explicitly converted, keeping any
+// existing comment exactly as written and associated with the new geo link.
+md.getMode = () => "source";
+const preserved = '%%wf:{"lat":1,"lng":2,"locationUrl":"old","rating":3.1,"custom":"keep"}%%';
+openNote("Edited.md", `## 2027-01-01\n- [Mine](${sourceUrl}) book ahead ${preserved} tail text`);
+obsidianStub.requestUrl = async () => sessionDetails;
+await plugin.convertAll(md.editor);
+plugin.refresh();
+assert(source.includes(preserved) && plugin.current.itinerary.stops[0].lat === 35, "explicit reconversion preserves old comments and uses the new geo pin");
+assert(plugin.current.itinerary.stops.length === 1 && plugin.current.itinerary.stops[0].googleUrl === sourceUrl, "prose before old metadata stays outside the canonical geo/source pair");
+const reconverted = source;
+await plugin.convertAll(md.editor);
+assert(source === reconverted && source.includes("book ahead") && source.endsWith("tail text"), "reconversion with existing prose is idempotent and preserves surrounding text");
+
+// An import's facts belong to the Google context that fetched them, even
+// though the durable geo/source pair remains useful after a settings change.
+const importSettings = { key: plugin.settings.googleApiKey, language: plugin.settings.languageCode };
+for (const change of ["key", "language", "removed-key"]) {
+  plugin.settings.googleApiKey = `import-${change}`;
+  plugin.settings.languageCode = "en";
+  openNote("ImportContext.md", `## 2027-01-01\n- [Context hotel](${sourceUrl})`);
+  let releaseImport;
+  obsidianStub.requestUrl = () => new Promise((resolve) => { releaseImport = resolve; });
+  const pending = plugin.convert(md.editor, 1, sourceUrl, "- [Context hotel](");
+  if (change === "language") plugin.settings.languageCode = "de";
+  else plugin.settings.googleApiKey = change === "key" ? "new-key" : "";
+  releaseImport(sessionDetails);
+  await pending;
+  plugin.refresh();
+  const stop = plugin.current.itinerary.stops[0];
+  assert(stop?.lat === 35 && stop.googleUrl === sourceUrl && !source.includes("%%wf:"), `late import keeps its durable pair after ${change} changes`);
+  assert(!stop.meta?.rating && !stop.meta?.photo, `late import cannot seed session facts under changed ${change}`);
+}
+plugin.settings.googleApiKey = importSettings.key;
+plugin.settings.languageCode = importSettings.language;
+
+// A route still supplies duration/geometry and is reused after reparsing;
+// its onRouted callback must not create a note comment.
+let routeRequests = 0;
+obsidianStub.requestUrl = async () => { routeRequests++; return { status: 200, json: { routes: [{ duration: "900s", distanceMeters: 1000, polyline: { encodedPolyline: "_p~iF~ps|U_ulLnnqC_mqNvxq`@" } }] } }; };
+openNote("Routes.md", "## 2027-01-01\n- 09:00 [A](geo:46,13)\n- 09:02 🚶 [B](geo:46.01,13.01)");
+const routeText = source;
+let routeDay = plugin.current.itinerary.days[0];
+plugin.router.legsFor(routeDay, new Date(2027, 0, 1), "Routes.md");
+await new Promise((resolve) => setImmediate(resolve));
+plugin.refresh();
+routeDay = plugin.current.itinerary.days[0];
+const route = plugin.router.legsFor(routeDay, new Date(2027, 0, 1), "Routes.md")[0];
+assert(route.routed && route.durationS === 900 && route.geometry.length > 1 && route.lateBy > 0, "session route still supports geometry and existing schedule checks");
+assert(routeRequests === 1 && source === routeText, "route results are cached across reparses without note writes");
+
+// Rename/delete/source changes during a slow response cannot attach facts to
+// a different stop. No comments are written even when another note opens.
+for (const change of ["rename", "delete", "source", "file"]) {
+  openNote("Slow.md", `## 2027-01-01\n- [Slow](geo:35,139) ([Map](https://maps.app.goo.gl/${change}))`);
+  let release;
+  obsidianStub.requestUrl = () => new Promise((resolve) => { release = resolve; });
+  const pending = plugin.fetchDetails();
+  if (change === "rename") source = source.replace("[Slow]", "[Other]");
+  if (change === "delete") source = "## 2027-01-01\nNo stops";
+  if (change === "source") source = source.replace("goo.gl/source", "goo.gl/other");
+  if (change === "file") openNote("Unrelated.md", "## 2027-01-01\n- [Other](geo:35,139)");
+  const edited = source;
+  release(sessionDetails);
+  await pending;
+  plugin.refresh();
+  assert(source === edited && !plugin.current.itinerary.stops[0]?.meta?.rating, `late session facts do not change or enrich a different ${change}`);
+}
+
+// Disabling storage also closes the deferred Reading-view write path.
+await settingsTab.setControlValue("storeMetadata", true);
+md.getMode = () => "preview";
+openNote("Queued.md", note);
+let finishQueued;
+app.vault.process = (_file, transform) => new Promise((resolve) => { finishQueued = () => { source = transform(source); resolve(); }; });
+plugin.setStopMeta(plugin.current.itinerary.stops[0], { rating: 4.9 });
+await settingsTab.setControlValue("storeMetadata", false);
+finishQueued();
+await new Promise((resolve) => setImmediate(resolve));
+assert(source === note, "turning storage off cancels already queued metadata writes");
+
+// A fresh plugin can read the durable plan but has none of the previous
+// session's imported facts. No cache is saved into plugin settings.
+md.getMode = () => "source";
+openNote("Restart.md", `## 2027-01-01\n- [Hotel](geo:35,139) ([Map](${sourceUrl}))`);
+await plugin.saveSettings();
+const restarted = new PluginClass(app, { id: "wayfarer", version: "0.0.0-smoke" });
+restarted.loadData = async () => plugin.savedData;
+await restarted.onload();
+const reopened = restarted.current.itinerary.stops[0];
+assert(reopened.lat === 35 && reopened.googleUrl === sourceUrl && !reopened.meta, "restart keeps the geo pin and source without persisting session facts");
+assert(!JSON.stringify(plugin.savedData).includes("smoke-place") && !JSON.stringify(plugin.savedData).includes("places/smoke"), "session details are not saved as plugin settings");
+restarted.onunload();
+app.vault = deferredVault;
+await settingsTab.setControlValue("storeMetadata", true);
+plugin.settings.googleApiKey = "smoke-key";
+console.log("smoke: OK (metadata off, settings UIs, import/details/routes, comments, stale replies and restart)");
+
+// Exercise actual bundled handlers and real Leaflet layers; only host surfaces and camera/layout are stubbed.
+{
+  const surface = (tag = "div", options = {}) => {
+    const classes = new Set((options.cls ?? "").split(" ").filter(Boolean));
+    return {
+      tag, classes, children: [], attrs: { ...options.attr }, value: options.value ?? "", text: options.text ?? "", style: { setProperty() {} },
+      win: globalThis, clientWidth: 1000, offsetHeight: 0,
+      classList: { contains: (cls) => classes.has(cls) },
+      createEl(t, o) { const child = surface(t, o); this.children.push(child); child.parent = this; return child; },
+      createDiv(o) { return this.createEl("div", typeof o === "string" ? { cls: o } : o); },
+      createSpan(o) { return this.createEl("span", o); },
+      empty() { this.children = []; }, setText(t) { this.text = t; },
+      addClass(cls) { classes.add(cls); }, removeClass(cls) { classes.delete(cls); },
+      toggleClass(cls, value) { if (value) classes.add(cls); else classes.delete(cls); },
+      setAttr(key, value) { this.attrs[key] = value; }, setCssProps() {}, scrollIntoView() {},
+      insertBefore(child, before) { this.children.splice(this.children.indexOf(before), 0, child); },
+      getBoundingClientRect: () => ({ top: 0, left: 0, bottom: 0, right: 1000 }),
+    };
+  };
+  const descendants = (root) => [root, ...root.children.flatMap(descendants)];
+  const byClass = (root, cls) => descendants(root).filter((el) => el.classes.has(cls));
+  const local = new Map();
+  app.loadLocalStorage = (key) => local.get(key);
+  app.saveLocalStorage = (key, value) => local.set(key, value);
+  app.workspace.setActiveLeaf = () => {};
+  globalThis.createDiv = (o) => surface("div", o);
+  globalThis.createSpan = (o) => surface("span", o);
+  plugin.settings.googleApiKey = "";
+  plugin.settings.autoOpen = false;
+  assert(plugin.settings.overviewHeadingLevel === 0, "old settings keep the flat itinerary by default");
+  assert(plugin.settingTabs[0].getSettingDefinitions().some((s) => s.items?.some((i) => i.control?.key === "overviewHeadingLevel")), "overview setting is discoverable");
+  await plugin.settingTabs[0].setControlValue("dayHeadingLevel", "3");
+  await plugin.settingTabs[0].setControlValue("overviewHeadingLevel", "2");
+  assert(plugin.settings.overviewHeadingLevel === 2 && plugin.savedData.overviewHeadingLevel === 2, "overview setting is numeric and saved");
+  const layered = "# Trip\n## 2027-01-01 Colombo\n- [Hotel A](geo:35,139)\n### 2027-01-01 City\n- [Airport](geo:35.1,139)\n- [City](geo:35.2,139)\n## 2027-01-02 - 2027-01-03 Negombo\n- 🚗 gg [Hotel B](geo:36,140) [🗺️](https://www.google.com/maps/place/Hotel+B)\n### 2027-01-02 Mangroves\n- [Market](geo:36.1,140)\n- [Mangroves](geo:36.2,140)\n### 2027-01-03 Beach\n- [Hotel B](geo:36,140)\n- [Beach](geo:36.3,140)";
+  openNote("Overview.md", layered);
+  const view = plugin.views["wayfarer"]({});
+  view.app = app;
+  view.map = { closePopup() {} };
+  for (const name of ["contentEl", "legendEl", "stripEl", "journeyEl", "emptyEl"]) view[name] = surface();
+  for (const name of ["applyTiles", "applySplit", "drawArrow", "fitAll", "flyToStop", "openPopup"]) view[name] = () => {};
+  view.render(md.file, plugin.current.itinerary, -1);
+  const lines = () => view.layer.getLayers().filter((layer) => typeof layer.getLatLngs === "function");
+  assert(view.markers.size === 6 && lines().length === 3, "daily view retains its pins and within-day legs only");
+  const dailySelection = app.loadLocalStorage("wayfarer:selection:Overview.md");
+  assert(byClass(view.stripEl, "wf-stop").every((card) => card.draggable), "daily drag and drop stays available");
+  byClass(view.legendEl, "wf-layer-toggle")[0].onclick();
+  assert(view.showOverview && view.markers.size === 2 && lines().length === 1, "overview draws only parent pins and their connecting route");
+  assert(byClass(view.stripEl, "wf-stop").every((card) => !card.draggable), "overview cannot move a pin out of its heading subtree");
+  assert(byClass(view.stripEl, "wf-leg").length === 1, "timeline shows the connection between stages");
+  assert(app.loadLocalStorage("wayfarer:selection:Overview.md") === dailySelection && local.has("wayfarer:selection:Overview.md:overview"), "overview selection cannot overwrite daily selection");
+  assert(source === layered, "switching views leaves the Markdown intact");
+  view.contentEl.clientWidth = 400;
+  const select = byClass(view.legendEl, "wf-day-select")[0];
+  assert(select.children.some((el) => el.value === "layer"), "mobile selector offers the other layer");
+  select.value = "layer"; select.onchange();
+  assert(!view.showOverview && view.markers.size === 6, "mobile layer selection returns to daily pins");
+  view.contentEl.clientWidth = 1000;
+  const cursor = md.editor.setCursor;
+  let target, scrollRange, centered, scrollState;
+  let activations = 0;
+  md.editor.setCursor = (pos) => { target = pos; };
+  md.editor.scrollIntoView = (range, center) => { scrollRange = range; centered = center; };
+  md.setEphemeralState = (state) => { scrollState = state; };
+  app.workspace.setActiveLeaf = () => { activations++; };
+  md.getMode = () => "source";
+  view.chooseLayer(true);
+  const stage = view.itinerary.days[1];
+  const popup = view.popupEl(stage, stage.stops[0]);
+  assert(byClass(popup, "wf-card-note").map((el) => el.text).join(" ") === "gg", "a prefixed geo/source pair does not repeat its place name in the popup");
+  view.chooseDay(stage);
+  assert(byClass(view.stripEl, "wf-stop-sub").some((el) => descendants(el).some((item) => item.text === "gg")), "the collapsed timeline card shows only the prefix text");
+  byClass(view.stripEl, "wf-stop")[0].onclick();
+  assert(byClass(view.stripEl, "wf-stop-note").some((el) => el.text === "gg"), "the expanded timeline card uses the same description");
+  const child = descendants(popup).find((el) => el.tag === "button" && el.text === "2027-01-03 Beach");
+  assert(child, "stage card lists its child daily plans");
+  child.onclick();
+  assert(!view.showOverview && view.activeDay === 2, "child click opens the original daily plan");
+  assert(target?.line === plugin.current.itinerary.days[2].headingLine && target.ch === 0 && scrollState?.scroll === target.line, "child drilldown reveals its heading at the top of the source view");
+  assert(source === layered, "drilldown leaves the original plan untouched");
+  view.chooseLayer(true);
+  const selected = view.itinerary.stops[1];
+  await view.jumpTo(selected);
+  assert(target?.line === selected.line && target.ch === selected.from && scrollRange.to.ch === selected.to && centered === true, "stop jump retains the exact source span and upstream editor centering");
+  md.getMode = () => "preview";
+  target = undefined; scrollState = undefined;
+  const activeBefore = activations;
+  await view.jumpTo(selected, false);
+  assert(scrollState?.line === selected.line && !target && activations === activeBefore, "passive map click requests native Reading-view line navigation without moving a hidden editor or stealing focus");
+  obsidianStub.Platform.isMobile = true;
+  scrollState = undefined;
+  await view.jumpTo(selected, false);
+  assert(!scrollState, "mobile map selection does not navigate away from the map");
+  await view.jumpTo(selected);
+  assert(scrollState?.line === selected.line && activations === activeBefore + 1, "explicit mobile Go to line requests native Reading-view line navigation");
+  scrollState = undefined;
+  await view.jumpTo({ line: 0, from: 0, to: 0 });
+  assert(scrollState?.line === 0 && !target, "Reading-view line zero is a valid explicit navigation target");
+  obsidianStub.Platform.isMobile = false;
+  const leaves = app.workspace.getLeavesOfType;
+  app.workspace.getLeavesOfType = (type) => type === "wayfarer" ? [{ view }] : leaves(type);
+  let cursorCalls = 0;
+  const onCursor = view.onCursor;
+  view.onCursor = () => { cursorCalls++; };
+  plugin.trackCursor();
+  assert(cursorCalls === 0, "Reading-view selections cannot follow a stale hidden editor cursor");
+  md.getMode = () => "source";
+  plugin.trackCursor();
+  assert(cursorCalls === 1, "editor cursor tracking is retained");
+  view.onCursor = onCursor;
+  app.workspace.getLeavesOfType = leaves;
+  view.chooseDay(null);
+  const firstStage = view.itinerary.days[0];
+  view.onCursor(plugin.current.itinerary.days[0].headingLine, 0);
+  assert(view.showOverview && view.activeDay === firstStage.index, "a child-day cursor emphasises its parent without switching layers");
+  view.chooseDay(stage);
+  view.onCursor(firstStage.stops[0].line, 0);
+  assert(view.activeDay === stage.index && !view.focused, "a pinned stage cannot focus a hidden stop from another stage");
+  view.chooseDay(null);
+  view.onCursor(firstStage.stops[0].line + 1, 0);
+  view.onCursor(firstStage.stops[0].line, 0);
+  assert(view.focused === firstStage.stops[0] && view.activeDay === firstStage.index, "All releases the pin and cursor selection resumes");
+  const sourceFile = view.file;
+  let finishOpen;
+  const pendingLeaf = { view: md, openFile: () => new Promise((resolve) => { finishOpen = resolve; }) };
+  app.workspace.getLeavesOfType = () => [];
+  app.workspace.getLeaf = () => pendingLeaf;
+  const beforeOpen = activations;
+  target = undefined;
+  const lateJump = view.jumpTo(selected);
+  view.file = Object.assign(new obsidianStub.TFile(), { path: "Unrelated.md" });
+  finishOpen();
+  await lateJump;
+  assert(!target && activations === beforeOpen, "a delayed source open cannot move or focus the new map source");
+  view.file = sourceFile;
+  app.workspace.getLeavesOfType = leaves;
+  md.editor.setCursor = cursor;
+  plugin.setStopMeta(selected, { leg: { from: "35.0000,139.0000", to: "36.0000,140.0000", via: "car", s: 7200, m: 20000 } }, true);
+  plugin.refresh();
+  assert(plugin.current.itinerary.overview.stops[1].meta?.leg?.s === 7200 && !plugin.current.itinerary.days[2].stops[0].meta?.leg, "overview route saves on its source occurrence, not a repeated daily hotel");
+  const stale = plugin.current.itinerary.overview.stops[1];
+  source = source.replace("[Hotel A](geo:35,139)", "[Hotel A](geo:34,138)");
+  const changed = source;
+  plugin.setStopMeta(stale, { leg: { from: "35.0000,139.0000", to: "36.0000,140.0000", via: "car", s: 600, m: 1000 } }, true);
+  assert(source === changed, "late overview route is rejected after its predecessor changed");
+  await plugin.settingTabs[0].setControlValue("overviewHeadingLevel", "0");
+  plugin.refresh();
+  view.render(md.file, plugin.current.itinerary, -1);
+  assert(!view.showOverview && !byClass(view.legendEl, "wf-layer-toggle").length, "disabling overview restores the original parser and view");
+  await plugin.settingTabs[0].setControlValue("overviewHeadingLevel", "2");
+  plugin.settings.googleApiKey = "smoke-key";
+  obsidianStub.requestUrl = async () => details;
+  openNote("StagesOnly.md", "## 2027-01-01\n- [Hotel](geo:35,139)");
+  view.render(md.file, plugin.current.itinerary, -1);
+  assert(view.showOverview && view.markers.size === 1 && view.emptyEl.classes.has("is-hidden"), "stage-only note opens its available overview");
+  await plugin.fetchDetails();
+  plugin.refresh();
+  assert(plugin.current.itinerary.overview.stops[0].meta?.placeId === "smoke-place", "details fetching includes overview-only notes");
+  // Integration of the independently reviewed overview and session-only features.
+  await plugin.settingTabs[0].setControlValue("storeMetadata", false);
+  plugin.settings.googleApiKey = "layered-session-key";
+  md.getMode = () => "source";
+  let factRequests = 0;
+  obsidianStub.requestUrl = async () => { factRequests++; return details; };
+  const original = "https://www.google.com/maps/place/Layer_Hotel/data=!3d35!4d139";
+  openNote("LayerSession.md", `## 2027-01-01\n- [Layer hotel](${original})\n### 2027-01-01\n- [Day hotel](geo:35,139)`);
+  await plugin.convertAll(md.editor);
+  plugin.refresh();
+  assert(plugin.current.itinerary.overview.stops[0].meta?.rating === 4.5, "imported overview facts survive reparsing in RAM");
+  assert(source.includes(`[🗺️](${original})`) && !source.includes("%%wf:"), "overview imports use the configured ordinary source pair without metadata");
+  factRequests = 0;
+  await plugin.fetchDetails();
+  plugin.refresh();
+  assert(factRequests === 2 && plugin.current.itinerary.stops[0].meta?.rating === 4.5 && plugin.current.itinerary.overview.stops[0].meta?.rating === 4.5, "explicit details include both daily and overview scopes");
+  plugin.setStopTransport(plugin.current.itinerary.overview.stops[0], "car");
+  plugin.refresh();
+  const untouched = source;
+  view.render(md.file, plugin.current.itinerary, -1);
+  view.chooseLayer(true);
+  assert(source === untouched && !source.includes("%%wf:"), "overview browsing and transport preserve metadata-free plans");
+  plugin.settings.googleApiKey = "";
+  plugin.refresh();
+  assert(!plugin.current.itinerary.stops[0].meta?.rating && !plugin.current.itinerary.overview.stops[0].meta?.rating, "credential changes invalidate session facts in both layers");
+  await plugin.settingTabs[0].setControlValue("storeMetadata", true);
+  plugin.settings.googleApiKey = "smoke-key";
+  plugin.settings.overviewHeadingLevel = 0;
+  plugin.settings.dayHeadingLevel = 2;
+  console.log("smoke: OK (overview layers, real Leaflet connections, mobile selector, drilldown, source navigation and safe route writes)");
+}
+
+// Settings migration and tile-only saves leave the itinerary and Markdown alone.
+{
+  const oldLoad = plugin.loadData;
+  const oldSettings = plugin.settings;
+  const custom = "https://private.example.com/{z}/{x}/{y}.png?key=TEST-ONLY";
+  plugin.loadData = async () => ({ tileUrl: custom, tileAttribution: "Private tiles", autoOpen: false });
+  await plugin.loadSettings();
+  assert(plugin.settings.mapSources.length === 1 && plugin.settings.mapSources[0].url === custom, "legacy custom map migrates without losing its URL");
+  assert(plugin.settingTabs[0].getSettingDefinitions().some((s) => s.items?.some((i) => i.name === "Map sources")), "map-source editor is available in modern settings search");
+  const before = source, parsed = plugin.current.itinerary, revision = plugin.settingsRev;
+  const original = plugin.settings.mapSources[0];
+  const satellite = { ...original, id: "satellite", name: "Satellite", url: "https://imagery.example.com/{z}/{x}/{y}.jpg", maxZoom: 16 };
+  await plugin.saveMapSources([original, satellite], satellite.id);
+  assert(source === before && plugin.current.itinerary === parsed && plugin.settingsRev === revision, "background configuration does not write Markdown or redraw itinerary layers");
+  assert(plugin.savedData.defaultMapSource === "satellite" && plugin.savedData.tileUrl === satellite.url, "default is saved and mirrored to the legacy fields");
+  plugin.loadData = async () => plugin.savedData;
+  await plugin.loadSettings();
+  await plugin.loadSettings();
+  assert(plugin.settings.mapSources.length === 2 && plugin.settings.mapSources[0].url === custom, "repeated load preserves source order without duplicates");
+  const snapshot = JSON.stringify(plugin.settings);
+  const save = plugin.saveData;
+  plugin.saveData = async () => { throw new Error("disk unavailable"); };
+  let rejected = false;
+  try { await plugin.saveMapSources([satellite], satellite.id); } catch { rejected = true; }
+  assert(rejected && JSON.stringify(plugin.settings) === snapshot, "failed settings save leaves the active configuration unchanged");
+  plugin.saveData = save;
+  plugin.loadData = oldLoad;
+  plugin.settings = oldSettings;
+  console.log("smoke: OK (map sources, migration, tile-only saves and save failures)");
+}
 
 openNote("A.md", note);
 let resolveRequest;
