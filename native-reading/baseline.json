@@ -1,0 +1,94 @@
+{
+  "version": "1.15.1",
+  "label": "baseline",
+  "expectedCenter": false,
+  "checks": [
+    {
+      "name": "Go to line reveals the expected Reading position",
+      "mode": "preview",
+      "top": 6278,
+      "height": 822,
+      "width": 574,
+      "ratio": 0.015625,
+      "hiddenCursor": {
+        "line": 0,
+        "ch": 0
+      }
+    },
+    {
+      "name": "test section is actually folded"
+    },
+    {
+      "name": "folded section is revealed at the expected position",
+      "mode": "preview",
+      "top": 6278,
+      "height": 822,
+      "width": 574,
+      "ratio": 0.015625,
+      "hiddenCursor": {
+        "line": 0,
+        "ch": 0
+      }
+    },
+    {
+      "name": "passive pin click reveals the note while retaining map focus",
+      "mode": "preview",
+      "top": 6278,
+      "height": 822,
+      "width": 574,
+      "ratio": 0.015625,
+      "hiddenCursor": {
+        "line": 0,
+        "ch": 0
+      }
+    },
+    {
+      "name": "heading navigation retains its top alignment",
+      "ratio": 0.00011405109489051095
+    },
+    {
+      "name": "rapid source jumps finish at the latest stop",
+      "mode": "preview",
+      "top": 6278,
+      "height": 822,
+      "width": 574,
+      "ratio": 0.015625,
+      "hiddenCursor": {
+        "line": 0,
+        "ch": 0
+      }
+    },
+    {
+      "name": "line zero stays visible without a negative scroll position",
+      "mode": "preview",
+      "top": 0,
+      "height": 822,
+      "width": 574,
+      "ratio": null,
+      "hiddenCursor": {
+        "line": 0,
+        "ch": 0
+      }
+    },
+    {
+      "name": "narrow touch Reading view uses the expected alignment",
+      "mode": "preview",
+      "top": 6262,
+      "height": 837,
+      "width": 356,
+      "ratio": 0.015344982078853047,
+      "hiddenCursor": {
+        "line": 0,
+        "ch": 0
+      }
+    },
+    {
+      "name": "navigation preserves Markdown byte for byte"
+    },
+    {
+      "name": "no renderer errors in the Reading scenarios"
+    }
+  ],
+  "pageErrors": [],
+  "scope": "Official unmodified desktop renderer; 412px touch emulation is not physical Android."
+}
