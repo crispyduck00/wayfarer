@@ -1,0 +1,19 @@
+{
+  "baseline": {
+    "label": "baseline-close",
+    "version": "1.15.1",
+    "animatedBeforeClose": true,
+    "pageErrors": [
+      "TypeError: Cannot read properties of undefined (reading '_leaflet_pos')\n    at jt (plugin:wayfarer:9:24073)\n    at e._getMapPanePos (plugin:wayfarer:9:45537)\n    at e._getNewPixelOrigin (plugin:wayfarer:9:45901)\n    at e._move (plugin:wayfarer:9:42227)\n    at e._onZoomTransitionEnd (plugin:wayfarer:9:49551)"
+    ]
+  },
+  "feature": {
+    "label": "feature-close",
+    "version": "1.15.1",
+    "animatedBeforeClose": true,
+    "pageErrors": [
+      "TypeError: Cannot read properties of undefined (reading '_leaflet_pos')\n    at Ut (plugin:wayfarer:9:23899)\n    at e._getMapPanePos (plugin:wayfarer:9:45365)\n    at e._getNewPixelOrigin (plugin:wayfarer:9:45729)\n    at e._move (plugin:wayfarer:9:42055)\n    at e._onZoomTransitionEnd (plugin:wayfarer:9:49379)"
+    ]
+  },
+  "both_report_pending_zoom_error": true
+}
