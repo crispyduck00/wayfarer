@@ -125,6 +125,10 @@ export async function runGeoLinksSmoke({ plugin, app, md, files, openNote, getSo
     activeChanged({ getViewState: () => ({ type: "markdown" }) });
     finishOpening(); await opening;
     assert(revealed === 0 && activated === 2 && reads.length === afterReads, "returning during map creation cancels the pending reveal");
+    const disabledOpening = plugin.followGeoLink(first);
+    plugin.settings.followGeoLinks = false;
+    finishOpening(); await disabledOpening;
+    assert(revealed === 0 && activated === 2, "disabling the option during map creation cancels the pending reveal");
   } finally {
     app.workspace = saved.workspace; app.vault = saved.vault; plugin.settings = saved.settings;
     md.getMode = saved.mode; plugin.followGeoLink = saved.follow; plugin.openMap = saved.openMap;
