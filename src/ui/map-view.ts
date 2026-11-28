@@ -70,9 +70,12 @@ export class WayfarerView extends ItemView {
 
   /** Preserve a compatible date filter; a new map or a hidden target opens All. */
   focusSourceStop(target: GeoLinkTarget, reset: boolean): void {
-    const stop = [...this.sourceItinerary?.stops ?? [], ...this.sourceItinerary?.overview?.stops ?? []].find((s) => matchesGeoStop(s, target));
-    if (!stop || this.file?.path !== target.path) return;
-    if (!!stop.overview !== this.showOverview) this.chooseLayer(!!stop.overview, false);
+    const source = [...this.sourceItinerary?.stops ?? [], ...this.sourceItinerary?.overview?.stops ?? []].find((s) => matchesGeoStop(s, target));
+    if (!source || this.file?.path !== target.path) return;
+    if (!!source.overview !== this.showOverview) this.chooseLayer(!!source.overview, false);
+    // An unchanged render retains the drawn stop objects and their marker keys.
+    const stop = this.itinerary?.stops.find((s) => matchesGeoStop(s, target));
+    if (!stop) return;
     if (reset || (this.pinnedDay >= 0 && this.pinnedDay !== stop.dayIndex)) {
       this.pinnedDay = -1;
       this.pinnedHeading = null;

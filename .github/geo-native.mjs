@@ -23,8 +23,11 @@ async function launch(touch = false) {
   dir = process.env.RUNNER_TEMP + '/geo-' + label + (touch ? '-touch' : '-desktop');
   for (const sub of ['vault/.obsidian/plugins/wayfarer', 'profile', 'xdg']) mkdirSync(dir + '/' + sub, { recursive: true });
   for (const file of ['main.js', 'manifest.json', 'styles.css']) copyFileSync(repo + '/' + file, dir + '/vault/.obsidian/plugins/wayfarer/' + file);
+  mkdirSync(dir + '/vault/.obsidian/plugins/native-probe', { recursive: true });
+  writeFileSync(dir + '/vault/.obsidian/plugins/native-probe/manifest.json', JSON.stringify({ id: 'native-probe', name: 'Native test probe', version: '1.0.0', minAppVersion: '1.0.0', author: 'test' }));
+  writeFileSync(dir + '/vault/.obsidian/plugins/native-probe/main.js', 'const {Plugin,Platform}=require("obsidian");module.exports=class extends Plugin{onload(){window.__nativePlatform=Platform;}};');
   writeFileSync(dir + '/vault/Trip.md', note);
-  writeFileSync(dir + '/vault/.obsidian/community-plugins.json', '["wayfarer"]');
+  writeFileSync(dir + '/vault/.obsidian/community-plugins.json', '["wayfarer","native-probe"]');
   writeFileSync(dir + '/vault/.obsidian/app.json', '{"safeMode":false}');
   const sources = [{ id: 'one', name: 'Street', url: 'https://tiles.test/{z}/{x}/{y}.png', attribution: 'Test street', maxZoom: 19 }, { id: 'two', name: 'Hybrid', url: 'https://tiles.test/hybrid/{z}/{x}/{y}.png', attribution: 'Test imagery', maxZoom: 19 }];
   writeFileSync(dir + '/vault/.obsidian/plugins/wayfarer/data.json', JSON.stringify({ autoOpen: false, googleApiKey: '', tileUrl: sources[0].url, tileAttribution: 'Test tiles', mapSources: sources, defaultMapSource: 'one', dayHeadingLevel: 2, overviewHeadingLevel: 0, listOpen: true, followCursor: false, uiLanguage: 'en' }));
@@ -103,16 +106,28 @@ try {
   ok(s.focus === 'Temple' && s.line === 6, 'actual Source mode label click follows its source stop', s);
   await page.evaluate(async () => { const p = app.plugins.plugins.wayfarer; p.settings.followGeoLinks = true; await p.saveSettings(); await __md.setState({ ...__md.getState(), mode: 'preview' }, {}); });
   await pause();
+  ok(JSON.parse(readFileSync(dir + '/vault/.obsidian/plugins/wayfarer/data.json', 'utf8')).followGeoLinks === true, 'the explicit option persists through the existing settings store');
   if (label === 'combined') {
     const wide = await page.evaluate(() => ({ zoom: getComputedStyle(__v.contentEl.querySelector('.leaflet-control-zoom')).visibility, layers: getComputedStyle(__v.contentEl.querySelector('.leaflet-control-layers')).visibility }));
     ok(wide.layers === 'visible', 'wide popup retains the normal basemap control', wide);
+    await page.evaluate(async () => {
+      const text = '## Colombo\n[Colombo](geo:6.9271,79.8612)\n### Arrival\n[Airport](geo:7.18,79.88)\n## Negombo\n[Negombo](geo:7.2,79.84)\n### Beach day\n[Beach](geo:7.22,79.83)';
+      const file = await app.vault.create('Layered.md', text);
+      const p = app.plugins.plugins.wayfarer; p.settings.dayHeadingLevel = 3; p.settings.overviewHeadingLevel = 2;
+      await __md.leaf.openFile(file, { state: { mode: 'preview' } }); p.refresh();
+    }); await pause();
+    await clickReading('Negombo'); s = await state();
+    ok(s.focus === 'Negombo' && s.popup && s.pinned === -1 && await page.evaluate(() => __v.showOverview), 'parent geo link opens its overview marker and popup', s);
+    await clickReading('Airport'); s = await state();
+    ok(s.focus === 'Airport' && s.popup && s.pinned === -1 && !await page.evaluate(() => __v.showOverview), 'child geo link opens its daily marker without a stale overview filter', s);
+    await page.evaluate(async () => { const p = app.plugins.plugins.wayfarer; p.settings.dayHeadingLevel = 2; p.settings.overviewHeadingLevel = 0; await __md.leaf.openFile(app.vault.getAbstractFileByPath('Trip.md'), { state: { mode: 'preview' } }); p.refresh(); }); await pause();
   }
   ok(readFileSync(dir + '/vault/Trip.md', 'utf8') === note, 'desktop clicks leave the note byte-identical');
   await page.screenshot({ path: output + '/desktop.png' });
   await context.close(); context = null;
   await launch(true);
   await page.evaluate(async () => {
-    window.require('obsidian').Platform.isMobile = true;
+    window.__nativePlatform.isMobile = true;
     const p = app.plugins.plugins.wayfarer; p.settings.followGeoLinks = true;
     __v.leaf.detach(); app.workspace.setActiveLeaf(__md.leaf, { focus: true });
   });
