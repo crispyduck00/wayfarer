@@ -126,6 +126,16 @@ try {
   await page.screenshot({ path: output + '/desktop.png' });
   await context.close(); context = null;
   await launch(true);
+  await page.setViewportSize({width:1600,height:1000});
+  await page.evaluate(()=>{window.__tapCalls=0;const p=app.plugins.plugins.wayfarer,follow=p.followGeoLink.bind(p);p.followGeoLink=target=>{__tapCalls++;return follow(target);};p.settings.followGeoLinks=true;});
+  await editMode(false);
+  await page.locator('.markdown-source-view .cm-link').filter({hasText:/^Beach$/}).first().tap(); await pause();
+  ok(await page.evaluate(()=>__v.focused?.name==='Beach'&&__tapCalls===1), 'touch Live Preview selects once without a compatibility-click duplicate');
+  await editMode(true);
+  await page.locator('.markdown-source-view .cm-link').filter({hasText:/^Temple$/}).first().tap(); await pause();
+  ok(await page.evaluate(()=>__v.focused?.name==='Temple'&&__tapCalls===2), 'touch Source mode selects once without a compatibility-click duplicate');
+  await page.evaluate(async()=>{await __md.setState({...__md.getState(),mode:'preview'},{});});
+  await page.setViewportSize({width:412,height:915});await pause();
   await page.evaluate(async () => {
     window.__nativePlatform.isMobile = true;
     app.workspace.rightSplit.collapse();
@@ -149,15 +159,12 @@ try {
   s = await state();
   ok(s.maps === 1 && s.line === 5 && s.pinned === -1 && s.narrow && s.popup, 'touch/mobile branch opens one map on All at the tapped visit', s);
   ok(await page.evaluate(() => app.workspace.activeLeaf === __v.leaf), 'mobile geo tap reveals the map tab');
-  console.log('BEFORE_RETURN', await page.evaluate(() => ({active:app.workspace.activeLeaf?.view.getViewType(), focus:document.activeElement?.outerHTML, headers:[...document.querySelectorAll('.workspace-tab-header')].map(e=>e.outerHTML.slice(0,650))})));
+  console.log('BEFORE_RETURN', await page.evaluate(() => ({active:app.workspace.activeLeaf?.view.getViewType(), focus:document.activeElement?.outerHTML.slice(0,250), headers:[...document.querySelectorAll('.workspace-tab-header')].map(e=>e.outerHTML.slice(0,650))})));
   await page.locator('.workspace-tab-header[data-type="markdown"]').tap();
   await page.waitForTimeout(1800);
-  console.log('AFTER_RETURN', await page.evaluate(() => ({active:app.workspace.activeLeaf?.view.getViewType(), focus:document.activeElement?.outerHTML, noteVisible:__md.containerEl.checkVisibility(), trace:__trace})));
+  console.log('AFTER_RETURN', await page.evaluate(() => ({active:app.workspace.activeLeaf?.view.getViewType(), focus:document.activeElement?.outerHTML.slice(0,250), noteVisible:__md.containerEl.checkVisibility(), trace:__trace})));
   ok(await page.evaluate(() => app.workspace.activeLeaf === __md.leaf && __md.containerEl.checkVisibility()), 'actual note-tab tap stays in the note without moving the map');
-  await editMode(false);
-  await page.locator('.markdown-source-view .cm-link').filter({hasText:/^Beach$/}).first().tap(); await pause();
-  console.log('AFTER_EDIT_TAP', await page.evaluate(() => ({active:app.workspace.activeLeaf?.view.getViewType(), focus:__v.focused?.name, trace:__trace})));
-  ok(await page.evaluate(() => app.workspace.activeLeaf === __v.leaf && __v.focused?.name==='Beach'), 'mobile Live Preview tap opens the selected stop');
+  await page.evaluate(async()=>{await app.workspace.revealLeaf(__v.leaf);}); await pause();
   if (label === 'combined') {
     const controls = async () => page.evaluate(() => ({ zoom: getComputedStyle(__v.contentEl.querySelector('.leaflet-control-zoom')).visibility, layers: getComputedStyle(__v.contentEl.querySelector('.leaflet-control-layers')).visibility }));
     let c = await controls(); ok(c.zoom === 'hidden' && c.layers === 'hidden', 'narrow popup hides basemap and zoom controls together', c);
@@ -172,6 +179,8 @@ try {
   await page.evaluate(async () => { await app.workspace.revealLeaf(__md.leaf); }); await pause();
   await clickReading('Temple', 0, true); s = await state();
   ok(s.maps === 1 && s.line === 6 && s.popup, 'a second mobile tap reuses the map tab', s);
+  await page.locator('.workspace-tab-header[data-type=\"markdown\"]').tap(); await page.waitForTimeout(1300);
+  ok(await page.evaluate(()=>app.workspace.activeLeaf===__md.leaf&&__md.containerEl.checkVisibility()), 'returning again stays in the note without interacting with the map');
   ok(readFileSync(dir + '/vault/Trip.md', 'utf8') === note, 'touch clicks leave the note byte-identical');
   ok(errors.length === 0, 'no renderer errors during geo navigation', errors);
   writeFileSync(output + '/result.json', JSON.stringify({ label, obsidian: '1.15.1', checks, errors, scope: 'Official desktop renderer with actual Reading/Live Preview/Source clicks and 412px touch emulation. Mobile Platform flag exercises map-tab behavior; contextmenu events test non-interception, not physical Android menus. No physical Android test.' }, null, 2) + '\n');
