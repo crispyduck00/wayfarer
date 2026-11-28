@@ -11,9 +11,9 @@ jobs:
       matrix:
         include:
           - name: standalone
-            ref: 8a3a9f87def3152d9a817634549b2c5cabf680fb
+            ref: fedde931eda7f927b3ff34bd2318d7cc2c90a612
           - name: combined
-            ref: ac3b0643814d2213e1dde4f7ee87c9641c79ed5b
+            ref: 59b05cfa0b83f47da215004d0127c044c1e21d2d
     steps:
       - uses: actions/checkout@v4
         with:
@@ -33,7 +33,7 @@ jobs:
       - name: Native test setup
         shell: bash
         env:
-          HARNESS: 34a1c6ed94ec9a87a760a83316423063d768773b
+          HARNESS: a04860153ec1760796be48c5d5fbd7e496ff22ef
         run: |
           git fetch origin "$HARNESS"
           git show "$HARNESS:.github/geo-native.mjs" > "$RUNNER_TEMP/geo-native.mjs"

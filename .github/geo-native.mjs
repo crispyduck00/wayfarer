@@ -126,6 +126,16 @@ try {
   await page.screenshot({ path: output + '/desktop.png' });
   await context.close(); context = null;
   await launch(true);
+  await page.setViewportSize({width:1600,height:1000});
+  await page.evaluate(()=>{window.__tapCalls=0;const p=app.plugins.plugins.wayfarer,follow=p.followGeoLink.bind(p);p.followGeoLink=target=>{__tapCalls++;return follow(target);};p.settings.followGeoLinks=true;});
+  await editMode(false);
+  await page.locator('.markdown-source-view .cm-link').filter({hasText:/^Beach$/}).first().tap(); await pause();
+  ok(await page.evaluate(()=>__v.focused?.name==='Beach'&&__tapCalls===1), 'touch Live Preview selects once without a compatibility-click duplicate');
+  await editMode(true);
+  await page.locator('.markdown-source-view .cm-link').filter({hasText:/^Temple$/}).first().tap(); await pause();
+  ok(await page.evaluate(()=>__v.focused?.name==='Temple'&&__tapCalls===2), 'touch Source mode selects once without a compatibility-click duplicate');
+  await page.evaluate(async()=>{await __md.setState({...__md.getState(),mode:'preview'},{});});
+  await page.setViewportSize({width:412,height:915});await pause();
   await page.evaluate(async () => {
     window.__nativePlatform.isMobile = true;
     app.workspace.rightSplit.collapse();
@@ -133,6 +143,14 @@ try {
     __v.leaf.detach(); app.workspace.setActiveLeaf(__md.leaf, { focus: true });
   });
   await pause();
+  await page.evaluate(() => {
+    window.__trace = []; const trace = (kind, data) => __trace.push({kind, at: performance.now(), ...data});
+    const p = app.plugins.plugins.wayfarer, follow = p.followGeoLink.bind(p), reveal = app.workspace.revealLeaf.bind(app.workspace);
+    p.followGeoLink = target => { trace('follow', {target, stack: new Error().stack}); return follow(target); };
+    app.workspace.revealLeaf = leaf => { trace('reveal', {type: leaf.view.getViewType(), stack:new Error().stack}); return reveal(leaf); };
+    app.workspace.on('active-leaf-change', leaf => trace('active', {type:leaf?.view.getViewType(), focus:document.activeElement?.outerHTML.slice(0,350)}));
+    for (const type of ['click','touchstart','touchend','pointerdown','pointerup','focusin']) document.addEventListener(type, e => trace(type, {target:e.target.outerHTML?.slice(0,300), prevented:e.defaultPrevented}), true);
+  });
   await reading('Hotel').first().evaluate(a => { const e = new MouseEvent('contextmenu', { bubbles: true, cancelable: true }); let untouched; document.addEventListener('contextmenu', event => { untouched = !event.defaultPrevented; event.preventDefault(); event.stopImmediatePropagation(); }, { once: true, capture: true }); a.dispatchEvent(e); if (!untouched) throw Error('Mobile contextmenu was intercepted'); });
   ok(true, 'mobile contextmenu/long-press event is not consumed by the feature');
   await clickReading('Hotel', 1, true);
@@ -141,6 +159,12 @@ try {
   s = await state();
   ok(s.maps === 1 && s.line === 5 && s.pinned === -1 && s.narrow && s.popup, 'touch/mobile branch opens one map on All at the tapped visit', s);
   ok(await page.evaluate(() => app.workspace.activeLeaf === __v.leaf), 'mobile geo tap reveals the map tab');
+  console.log('BEFORE_RETURN', await page.evaluate(() => ({active:app.workspace.activeLeaf?.view.getViewType(), focus:document.activeElement?.outerHTML.slice(0,250), headers:[...document.querySelectorAll('.workspace-tab-header')].map(e=>e.outerHTML.slice(0,650))})));
+  await page.locator('.workspace-tab-header[data-type="markdown"]').tap();
+  await page.waitForTimeout(1800);
+  console.log('AFTER_RETURN', await page.evaluate(() => ({active:app.workspace.activeLeaf?.view.getViewType(), focus:document.activeElement?.outerHTML.slice(0,250), noteVisible:__md.containerEl.checkVisibility(), trace:__trace})));
+  ok(await page.evaluate(() => app.workspace.activeLeaf === __md.leaf && __md.containerEl.checkVisibility()), 'actual note-tab tap stays in the note without moving the map');
+  await page.evaluate(async()=>{await app.workspace.revealLeaf(__v.leaf);}); await pause();
   if (label === 'combined') {
     const controls = async () => page.evaluate(() => ({ zoom: getComputedStyle(__v.contentEl.querySelector('.leaflet-control-zoom')).visibility, layers: getComputedStyle(__v.contentEl.querySelector('.leaflet-control-layers')).visibility }));
     let c = await controls(); ok(c.zoom === 'hidden' && c.layers === 'hidden', 'narrow popup hides basemap and zoom controls together', c);
@@ -155,10 +179,12 @@ try {
   await page.evaluate(async () => { await app.workspace.revealLeaf(__md.leaf); }); await pause();
   await clickReading('Temple', 0, true); s = await state();
   ok(s.maps === 1 && s.line === 6 && s.popup, 'a second mobile tap reuses the map tab', s);
+  await page.locator('.workspace-tab-header[data-type=\"markdown\"]').tap(); await page.waitForTimeout(1300);
+  ok(await page.evaluate(()=>app.workspace.activeLeaf===__md.leaf&&__md.containerEl.checkVisibility()), 'returning again stays in the note without interacting with the map');
   ok(readFileSync(dir + '/vault/Trip.md', 'utf8') === note, 'touch clicks leave the note byte-identical');
   ok(errors.length === 0, 'no renderer errors during geo navigation', errors);
   writeFileSync(output + '/result.json', JSON.stringify({ label, obsidian: '1.15.1', checks, errors, scope: 'Official desktop renderer with actual Reading/Live Preview/Source clicks and 412px touch emulation. Mobile Platform flag exercises map-tab behavior; contextmenu events test non-interception, not physical Android menus. No physical Android test.' }, null, 2) + '\n');
 } catch (error) {
   console.error(error.stack ?? String(error)); process.exitCode = 1;
-  try { console.error('STATE', JSON.stringify(await state())); console.error((await page.locator('body').innerText()).slice(-12000)); console.error(await page.locator('.markdown-source-view').evaluate(el => el.outerHTML.slice(0,25000))); await page.screenshot({ path: output + '/failure.png' }); } catch {}
+  try { console.error('STATE', JSON.stringify(await state())); console.error('TRACE', await page.evaluate(()=>window.__trace)); console.error((await page.locator('body').innerText()).slice(-12000)); console.error(await page.locator('.markdown-source-view').evaluate(el => el.outerHTML.slice(0,25000))); await page.screenshot({ path: output + '/failure.png' }); } catch {}
 } finally { await context?.close(); }

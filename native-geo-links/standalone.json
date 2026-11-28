@@ -122,6 +122,12 @@
       "name": "desktop clicks leave the note byte-identical"
     },
     {
+      "name": "touch Live Preview selects once without a compatibility-click duplicate"
+    },
+    {
+      "name": "touch Source mode selects once without a compatibility-click duplicate"
+    },
+    {
       "name": "mobile contextmenu/long-press event is not consumed by the feature"
     },
     {
@@ -143,6 +149,9 @@
       "name": "mobile geo tap reveals the map tab"
     },
     {
+      "name": "actual note-tab tap stays in the note without moving the map"
+    },
+    {
       "name": "a second mobile tap reuses the map tab",
       "state": {
         "focus": "Temple",
@@ -156,6 +165,9 @@
         "popup": true,
         "narrow": true
       }
+    },
+    {
+      "name": "returning again stays in the note without interacting with the map"
     },
     {
       "name": "touch clicks leave the note byte-identical"
