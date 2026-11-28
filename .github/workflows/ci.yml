@@ -11,9 +11,9 @@ jobs:
       matrix:
         include:
           - name: standalone
-            ref: f2357f3816efff4855c0db1af66f9fa313720f26
+            ref: fedde931eda7f927b3ff34bd2318d7cc2c90a612
           - name: combined
-            ref: 88718833a9a1810b05b8ce90b649d4893e13c700
+            ref: 59b05cfa0b83f47da215004d0127c044c1e21d2d
     steps:
       - uses: actions/checkout@v4
         with:
