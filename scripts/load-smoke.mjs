@@ -31,7 +31,8 @@ class Component {
   cleanups = [];
   register(cleanup) { this.cleanups.push(cleanup); }
   registerEvent() {}
-  registerDomEvent() {}
+  domEvents = [];
+  registerDomEvent(target, type, callback, options) { this.domEvents.push({ target, type, callback, options }); }
   registerInterval() {}
 }
 class PluginStub extends Component {
@@ -448,6 +449,9 @@ md.getMode = () => "source";
 }
 app.vault = deferredVault;
 console.log("smoke: OK (stale drags, renamed stops, duplicate legs and link copies)");
+
+const { runGeoLinksSmoke } = await import("./geo-links-smoke.mjs");
+await runGeoLinksSmoke({ plugin, app, md, files, openNote, getSource: () => source, setSource: (text) => { source = text; }, obsidianStub, codemirrorViewStub, assert });
 
 openNote("A.md", note);
 let resolveRequest;

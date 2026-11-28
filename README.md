@@ -128,3 +128,8 @@ pnpm dev     # esbuild watch
 ## Credits
 
 Inspired by Ink and Switch's [Embark](https://www.inkandswitch.com/embark/) and by [Waypoint](https://github.com/jakelazaroff/waypoint). Map rendering by [Leaflet](https://leafletjs.com/), tiles from [OpenStreetMap](https://www.openstreetmap.org/copyright) by default. MIT license.
+
+To select a mapped stop by clicking its geo link in Reading view or the editor,
+enable **Follow geo link on map** (off by default). Desktop and mobile reuse
+the open map; a new map starts on All. Native link menus and modified clicks
+remain external. See [geo-link navigation](docs/follow-geo-links.md).
