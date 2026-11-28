@@ -17,8 +17,11 @@ import { PhotoCache, photoFor, type StopPhoto } from "./photos";
 import { getLocale, localeFor, setLocale, t } from "./core/i18n";
 import { bareLeg } from "./core/legs";
 import { googleLanguageFor } from "./core/google-language";
+import { mapSourcesFrom, pickMapSource, type MapSource } from "./core/map-sources";
 import { PlaceDetailsCache, placeFacts } from "./place-details";
 import { pickCategory } from "./core/category";
+import { matchesGeoStop, type GeoLinkTarget } from "./core/geo-link-follow";
+import { geoLinkClicks } from "./ui/geo-link-follow";
 
 /**
  * Wayfarer: the note is the plan, the pane is the map.
@@ -63,9 +66,9 @@ export default class WayfarerPlugin extends Plugin {
 
   /** Overlay session facts on a fresh parse; the Markdown remains the durable plan. */
   private parseNote(text: string): Itinerary {
-    const itinerary = parseItinerary(text, { maxHeadingLevel: this.settings.dayHeadingLevel });
+    const itinerary = parseItinerary(text, { maxHeadingLevel: this.settings.dayHeadingLevel, overviewHeadingLevel: this.settings.overviewHeadingLevel });
     if (!this.settings.storeMetadata) {
-      for (const stop of itinerary.stops) {
+      for (const stop of [...itinerary.stops, ...itinerary.overview?.stops ?? []]) {
         const facts = this.details.get(stop);
         if (!facts) continue;
         stop.meta = { ...stop.meta, ...facts };
@@ -136,9 +139,11 @@ export default class WayfarerPlugin extends Plugin {
     this.register(() => onEditorChange.cancel());
     this.registerEvent(this.app.metadataCache.on("changed", (file) => { if (file.path === this.current?.file.path) this.refresh(); }));
     const documents = new WeakSet<Document>();
+    const followGeoLink = geoLinkClicks(this);
     const trackDocument = (doc: Document) => {
       if (documents.has(doc)) return;
       documents.add(doc);
+      this.registerDomEvent(doc, "click", followGeoLink, true);
       this.registerDomEvent(doc, "selectionchange", () => this.trackCursor());
       this.registerDomEvent(doc, "keyup", () => this.trackCursor());
       this.registerDomEvent(doc, "mouseup", () => this.trackCursor());
@@ -178,7 +183,19 @@ export default class WayfarerPlugin extends Plugin {
     // Settings that no longer exist (photo cache, routing toggles) are dropped on the next save.
     const known = Object.fromEntries(Object.entries(data).filter(([k]) => k in DEFAULT_SETTINGS));
     this.settings = { ...DEFAULT_SETTINGS, ...known };
+    this.settings.followGeoLinks = data.followGeoLinks === true;
     normalizeSettings(this.settings);
+    this.settings.mapSources = mapSourcesFrom(data.mapSources, data.tileUrl, data.tileAttribution);
+    this.settings.defaultMapSource = pickMapSource(this.settings.mapSources, this.settings.defaultMapSource, null).id;
+  }
+  /** Tile configuration does not redraw itinerary layers or close their popups. */
+  async saveMapSources(sources: MapSource[], defaultId: string): Promise<void> {
+    const mapSources = sources.map((s) => ({ ...s, subdomains: s.subdomains?.slice() }));
+    const chosen = pickMapSource(mapSources, defaultId, null);
+    const patch = { mapSources, defaultMapSource: chosen.id, tileUrl: chosen.url, tileAttribution: chosen.attribution };
+    await this.saveData({ ...this.settings, ...patch });
+    Object.assign(this.settings, patch);
+    for (const view of this.mapViews) view.applyTiles();
   }
   /** Bumped on every save, so a pane whose note did not change still redraws for a changed setting. */
   settingsRev = 0;
@@ -189,6 +206,41 @@ export default class WayfarerPlugin extends Plugin {
   }
 
   /* ---------- map pane ---------- */
+
+  private geoLinkRevision = 0;
+
+  /** Explicit source navigation also works when cursor following is unavailable on mobile. */
+  async followGeoLink(target: GeoLinkTarget): Promise<void> {
+    if (this.unloaded || !this.settings.followGeoLinks) return;
+    const revision = ++this.geoLinkRevision;
+    try {
+      const file = this.app.vault.getAbstractFileByPath(target.path);
+      if (!(file instanceof TFile)) return;
+      const editor = this.app.workspace.getLeavesOfType("markdown").map((l) => l.view)
+        .find((v): v is MarkdownView => v instanceof MarkdownView && v.file?.path === file.path && v.getMode() === "source");
+      const text = editor ? editor.editor.getValue() : await this.app.vault.cachedRead(file);
+      if (this.unloaded || !this.settings.followGeoLinks || revision !== this.geoLinkRevision) return;
+      const itinerary = this.parseNote(text);
+      if (![...itinerary.stops, ...itinerary.overview?.stops ?? []].some((s) => matchesGeoStop(s, target))) {
+        new Notice("This geo link is no longer part of the mapped plan.");
+        return;
+      }
+      let view = this.mapViews.find((v) => v.sourcePath === file.path) ?? this.mapViews[0];
+      const reset = !view || view.sourcePath !== file.path;
+      if (!view) {
+        await this.openMap();
+        view = this.mapViews[0];
+      }
+      if (!view || this.unloaded || !this.settings.followGeoLinks || revision !== this.geoLinkRevision) return;
+      this.current = { file, itinerary };
+      view.render(file, itinerary, -1);
+      if (Platform.isMobile) await this.app.workspace.revealLeaf(view.leaf);
+      if (this.unloaded || !this.settings.followGeoLinks || revision !== this.geoLinkRevision || view.sourcePath !== file.path) return;
+      view.focusSourceStop(target, reset);
+    } catch {
+      if (!this.unloaded && revision === this.geoLinkRevision) new Notice("Could not open this location on the map.");
+    }
+  }
 
   async openMap(): Promise<void> {
     const existing = this.mapLeaf();
@@ -241,7 +293,7 @@ export default class WayfarerPlugin extends Plugin {
     const itinerary = this.parseNote(md.editor.getValue());
     this.current = { file: md.file, itinerary };
     this.pushToViews();
-    if (this.settings.autoOpen && itinerary.stops.length > 0 && this.mapViews.length === 0 && !Platform.isMobile) this.autoOpenSoon();
+    if (this.settings.autoOpen && (itinerary.stops.length > 0 || itinerary.overview?.stops.length) && this.mapViews.length === 0 && !Platform.isMobile) this.autoOpenSoon();
   }
 
   /**
@@ -261,8 +313,9 @@ export default class WayfarerPlugin extends Plugin {
   private pushToViews(): void {
     if (!this.current) return;
     const md = this.activeMarkdown();
-    const day = md?.file?.path === this.current.file.path ? dayAtLine(this.current.itinerary, md.editor.getCursor().line) : -1;
-    for (const v of this.mapViews) v.render(this.current.file, this.current.itinerary, day, md?.editor.getCursor().line ?? -1);
+    const line = md?.file?.path === this.current.file.path && md.getMode() === "source" ? md.editor.getCursor().line : -1;
+    const day = line >= 0 ? dayAtLine(this.current.itinerary, line) : -1;
+    for (const v of this.mapViews) v.render(this.current.file, this.current.itinerary, day, line);
   }
 
   private onEdit(editor: Editor, info: MarkdownFileInfo): void {
@@ -277,7 +330,7 @@ export default class WayfarerPlugin extends Plugin {
   private trackCursor(): void {
     if (this.mapViews.length === 0 || !this.current) return;
     const md = this.activeMarkdown();
-    if (!md?.file || md.file.path !== this.current.file.path) return;
+    if (!md?.file || md.file.path !== this.current.file.path || md.getMode() !== "source") return;
     const line = md.editor.getCursor().line;
     const day = dayAtLine(this.current.itinerary, line);
     for (const v of this.mapViews) v.onCursor(line, day);
@@ -328,7 +381,7 @@ export default class WayfarerPlugin extends Plugin {
   private async exportKml(editor: Editor, ctx: MarkdownView | MarkdownFileInfo): Promise<void> {
     const file = ctx.file;
     if (!file) return;
-    const it = parseItinerary(editor.getValue(), { maxHeadingLevel: this.settings.dayHeadingLevel });
+    const it = parseItinerary(editor.getValue(), { maxHeadingLevel: this.settings.dayHeadingLevel, overviewHeadingLevel: this.settings.overviewHeadingLevel });
     if (it.stops.length === 0) {
       new Notice(t("empty"));
       return;
@@ -365,8 +418,10 @@ export default class WayfarerPlugin extends Plugin {
     const md = this.activeMarkdown();
     if (!md?.file || !this.current || md.file.path !== this.current.file.path) return;
     // The same place can appear twice (the hotel at the end of every day), so the line it was parsed from is tried first.
-    const itinerary = parseItinerary(md.editor.getValue(), { maxHeadingLevel: this.settings.dayHeadingLevel });
-    const stops = itinerary.stops;
+    const itinerary = parseItinerary(md.editor.getValue(), { maxHeadingLevel: this.settings.dayHeadingLevel, overviewHeadingLevel: this.settings.overviewHeadingLevel });
+    const scope = stop.overview ? itinerary.overview : itinerary;
+    if (!scope) return;
+    const stops = scope.stops;
     // When lines moved, the same place elsewhere is taken only if it is the one such stop; with two
     // (the same leg on two days) there is no telling which the result was for, so it is dropped.
     const same = stops.filter((s) => s.lat === stop.lat && s.lng === stop.lng && s.name === stop.name && s.url === stop.url && s.googleUrl === stop.googleUrl);
@@ -375,8 +430,8 @@ export default class WayfarerPlugin extends Plugin {
       ?? (quiet ? null : stop);
     if (!live) return;
     if (patch.leg) {
-      const day = itinerary.days[live.dayIndex];
-      const from = day?.stops[live.index - 1];
+      const day = scope.days[live.dayIndex];
+      const from = day?.stops[live.index - 1] ?? (stop.overview && live.index === 0 ? scope.days[live.dayIndex - 1]?.stops.at(-1) : undefined);
       if (!from || !bareLeg(from, { ...live, meta: { ...live.meta, leg: patch.leg } }, transitContext(dateForDay(day), from, live)).routed) return;
     }
     const expectedText = md.editor.getValue();
@@ -442,7 +497,7 @@ export default class WayfarerPlugin extends Plugin {
     const language = this.googleLanguageCode;
     const valid = () => !this.unloaded && md.file === file && this.settings.googleApiKey === apiKey && this.googleLanguageCode === language;
     const places = googlePlaces(apiKey, language);
-    const todo = cur.itinerary.stops.filter((s) => !this.settings.storeMetadata || !s.meta?.placeId);
+    const todo = [...cur.itinerary.stops, ...cur.itinerary.overview?.stops ?? []].filter((s) => !this.settings.storeMetadata || !s.meta?.placeId);
     if (todo.length === 0) { new Notice("Wayfarer: every stop already has its details"); return; }
     let done = 0;
     let missed = 0;
@@ -568,7 +623,8 @@ export default class WayfarerPlugin extends Plugin {
         // A late import must not seed facts under a different key or language.
         if (!persist && place.meta && this.settings.googleApiKey === apiKey && this.googleLanguageCode === language) {
           const source = place.url?.replace(/\(/g, "%28").replace(/\)/g, "%29");
-          for (const stop of parseItinerary(editor.getValue(), { maxHeadingLevel: this.settings.dayHeadingLevel }).stops) {
+          const imported = parseItinerary(editor.getValue(), { maxHeadingLevel: this.settings.dayHeadingLevel, overviewHeadingLevel: this.settings.overviewHeadingLevel });
+          for (const stop of [...imported.stops, ...imported.overview?.stops ?? []]) {
             if (stop.googleUrl === source && distanceM(stop, place) < 1) this.details.remember(stop, place.meta);
           }
           this.refresh();
