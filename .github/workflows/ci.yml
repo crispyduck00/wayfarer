@@ -1,19 +1,62 @@
 name: CI
-
 on:
-  push:
-    branches: [main]
   pull_request:
-
+permissions:
+  contents: read
 jobs:
   build:
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: standalone
+            ref: 8a3a9f87def3152d9a817634549b2c5cabf680fb
+          - name: combined
+            ref: ac3b0643814d2213e1dde4f7ee87c9641c79ed5b
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ matrix.ref }}
+          fetch-depth: 0
       - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: "22"
+          node-version: '22'
           cache: pnpm
-      - run: pnpm install --frozen-lockfile
-      - run: pnpm check
+      - name: Full check
+        shell: bash
+        run: |
+          set -o pipefail
+          pnpm install --frozen-lockfile
+          pnpm check 2>&1 | tee check.log
+      - name: Native test setup
+        shell: bash
+        env:
+          HARNESS: fc376878d25d3f4d8120c078f6f2d8afd5854271
+        run: |
+          git fetch origin "$HARNESS"
+          git show "$HARNESS:.github/geo-native.mjs" > "$RUNNER_TEMP/geo-native.mjs"
+          sudo apt-get update -qq
+          sudo apt-get install -y libgtk-3-0t64 libnss3 libasound2t64 libgbm1 libxss1
+          npm install --prefix "$RUNNER_TEMP/native-deps" --no-save playwright@1.56.1
+          mkdir -p "$RUNNER_TEMP/obsidian-desktop"
+          curl -fL --retry 3 https://github.com/obsidianmd/obsidian-releases/releases/download/v1.15.1/obsidian-1.15.1.tar.gz -o "$RUNNER_TEMP/obsidian.tar.gz"
+          tar -xzf "$RUNNER_TEMP/obsidian.tar.gz" -C "$RUNNER_TEMP/obsidian-desktop"
+      - name: Native geo navigation
+        env:
+          NATIVE_DEPS: ${{ runner.temp }}/native-deps
+          OBSIDIAN_BIN: ${{ runner.temp }}/obsidian-desktop/obsidian-1.15.1/obsidian
+          UI_OUTPUT: native-geo
+        run: node "$RUNNER_TEMP/geo-native.mjs" "$GITHUB_WORKSPACE" "${{ matrix.name }}"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: Wayfarer-geo-${{ matrix.name }}-2026-11-28
+          path: |
+            native-geo/
+            check.log
+            main.js
+            manifest.json
+            styles.css
+          if-no-files-found: error
