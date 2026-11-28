@@ -21,7 +21,7 @@ import { mapSourcesFrom, pickMapSource, type MapSource } from "./core/map-source
 import { PlaceDetailsCache, placeFacts } from "./place-details";
 import { pickCategory } from "./core/category";
 import { matchesGeoStop, type GeoLinkTarget } from "./core/geo-link-follow";
-import { geoLinkClicks } from "./ui/geo-link-follow";
+import { registerGeoLinkClicks } from "./ui/geo-link-follow";
 
 /**
  * Wayfarer: the note is the plan, the pane is the map.
@@ -131,7 +131,11 @@ export default class WayfarerPlugin extends Plugin {
     });
 
     this.registerEvent(this.app.workspace.on("editor-paste", (evt, editor) => this.onPaste(evt, editor)));
-    this.registerEvent(this.app.workspace.on("active-leaf-change", () => this.refresh()));
+    this.registerEvent(this.app.workspace.on("active-leaf-change", (leaf) => {
+      // Returning to a note cancels pending link navigation, including a slow vault read.
+      if (leaf?.getViewState().type !== VIEW_TYPE_WAYFARER) this.geoLinkRevision++;
+      this.refresh();
+    }));
     // A different note opened in the same pane changes no leaf, only the file.
     this.registerEvent(this.app.workspace.on("file-open", () => this.refresh()));
     const onEditorChange = debounce((editor: Editor, info: MarkdownFileInfo) => this.onEdit(editor, info), 250, true);
@@ -139,11 +143,10 @@ export default class WayfarerPlugin extends Plugin {
     this.register(() => onEditorChange.cancel());
     this.registerEvent(this.app.metadataCache.on("changed", (file) => { if (file.path === this.current?.file.path) this.refresh(); }));
     const documents = new WeakSet<Document>();
-    const followGeoLink = geoLinkClicks(this);
     const trackDocument = (doc: Document) => {
       if (documents.has(doc)) return;
       documents.add(doc);
-      this.registerDomEvent(doc, "click", followGeoLink, true);
+      registerGeoLinkClicks(this, doc);
       this.registerDomEvent(doc, "selectionchange", () => this.trackCursor());
       this.registerDomEvent(doc, "keyup", () => this.trackCursor());
       this.registerDomEvent(doc, "mouseup", () => this.trackCursor());
@@ -228,13 +231,14 @@ export default class WayfarerPlugin extends Plugin {
       let view = this.mapViews.find((v) => v.sourcePath === file.path) ?? this.mapViews[0];
       const reset = !view || view.sourcePath !== file.path;
       if (!view) {
-        await this.openMap();
+        await this.openMap(() => revision === this.geoLinkRevision && !this.unloaded);
         view = this.mapViews[0];
       }
       if (!view || this.unloaded || !this.settings.followGeoLinks || revision !== this.geoLinkRevision) return;
       this.current = { file, itinerary };
       view.render(file, itinerary, -1);
-      if (Platform.isMobile) await this.app.workspace.revealLeaf(view.leaf);
+      // Activate a ready mobile tab synchronously; do not queue another reveal/focus.
+      if (Platform.isMobile) this.app.workspace.setActiveLeaf(view.leaf, { focus: true });
       if (this.unloaded || !this.settings.followGeoLinks || revision !== this.geoLinkRevision || view.sourcePath !== file.path) return;
       view.focusSourceStop(target, reset);
     } catch {
@@ -242,7 +246,7 @@ export default class WayfarerPlugin extends Plugin {
     }
   }
 
-  async openMap(): Promise<void> {
+  async openMap(stillWanted?: () => boolean): Promise<void> {
     const existing = this.mapLeaf();
     if (existing) {
       await this.app.workspace.revealLeaf(existing);
@@ -252,6 +256,7 @@ export default class WayfarerPlugin extends Plugin {
     const leaf = Platform.isMobile ? this.app.workspace.getLeaf("tab") : this.app.workspace.getRightLeaf(false);
     if (!leaf) return;
     await leaf.setViewState({ type: VIEW_TYPE_WAYFARER, active: true });
+    if (stillWanted && !stillWanted()) return;
     await this.app.workspace.revealLeaf(leaf);
   }
 
