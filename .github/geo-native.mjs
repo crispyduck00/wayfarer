@@ -128,12 +128,14 @@ try {
   await launch(true);
   await page.evaluate(async () => {
     window.__nativePlatform.isMobile = true;
+    app.workspace.rightSplit.collapse();
     const p = app.plugins.plugins.wayfarer; p.settings.followGeoLinks = true;
     __v.leaf.detach(); app.workspace.setActiveLeaf(__md.leaf, { focus: true });
   });
   await pause();
   await clickReading('Hotel', 1, true);
   await page.evaluate(() => { window.__v = app.workspace.getLeavesOfType('wayfarer').find(l => l.view.isReady)?.view; });
+  await page.waitForFunction(() => __v.contentEl.clientWidth > 300);
   s = await state();
   ok(s.maps === 1 && s.line === 5 && s.pinned === -1 && s.narrow && s.popup, 'touch/mobile branch opens one map on All at the tapped visit', s);
   ok(await page.evaluate(() => app.workspace.activeLeaf === __v.leaf), 'mobile geo tap reveals the map tab');
@@ -151,8 +153,8 @@ try {
   await page.evaluate(() => app.workspace.setActiveLeaf(__md.leaf, { focus: true })); await pause();
   await clickReading('Temple', 0, true); s = await state();
   ok(s.maps === 1 && s.line === 6 && s.popup, 'a second mobile tap reuses the map tab', s);
-  await page.evaluate(() => { app.workspace.setActiveLeaf(__md.leaf, { focus: true }); window.__mobileLink = document.querySelector('.markdown-reading-view a.wf-geo-link'); }); await pause();
-  const longPress = await page.evaluate(() => { let untouched; const listener = e => { untouched = !e.defaultPrevented; e.preventDefault(); }; document.addEventListener('contextmenu', listener, { once: true, capture: true }); const e = new MouseEvent('contextmenu', { bubbles: true, cancelable: true }); __mobileLink.dispatchEvent(e); return untouched; });
+  await page.evaluate(() => app.workspace.setActiveLeaf(__md.leaf, { focus: true })); await pause();
+  const longPress = await reading('Hotel').first().evaluate(a => { let untouched; const listener = e => { untouched = !e.defaultPrevented; e.preventDefault(); }; document.addEventListener('contextmenu', listener, { once: true, capture: true }); const e = new MouseEvent('contextmenu', { bubbles: true, cancelable: true }); a.dispatchEvent(e); return untouched; });
   ok(longPress, 'mobile contextmenu/long-press event is not consumed by the feature');
   ok(readFileSync(dir + '/vault/Trip.md', 'utf8') === note, 'touch clicks leave the note byte-identical');
   ok(errors.length === 0, 'no renderer errors during geo navigation', errors);
