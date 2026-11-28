@@ -1,0 +1,170 @@
+{
+  "label": "standalone",
+  "obsidian": "1.15.1",
+  "checks": [
+    {
+      "name": "existing installation defaults to external geo links"
+    },
+    {
+      "name": "disabled Reading click retains external activation",
+      "state": {
+        "pinned": -1,
+        "active": -1,
+        "markers": 4,
+        "maps": 1,
+        "mode": "preview",
+        "external": 1,
+        "popup": false,
+        "narrow": false
+      }
+    },
+    {
+      "name": "Reading anchor retains its real external destination",
+      "state": {
+        "href": "https://www.google.com/maps/search/?api=1&query=7.1,79.8"
+      }
+    },
+    {
+      "name": "Reading click selects the exact repeated visit in the existing All map",
+      "state": {
+        "focus": "Hotel",
+        "line": 5,
+        "pinned": -1,
+        "active": -1,
+        "markers": 4,
+        "maps": 1,
+        "mode": "preview",
+        "external": 1,
+        "popup": true,
+        "narrow": false
+      }
+    },
+    {
+      "name": "hidden Reading editor cursor does not replace the clicked visit",
+      "state": {
+        "focus": "Hotel",
+        "line": 5,
+        "pinned": -1,
+        "active": -1,
+        "markers": 4,
+        "maps": 1,
+        "mode": "preview",
+        "external": 1,
+        "popup": true,
+        "narrow": false
+      }
+    },
+    {
+      "name": "following does not replace the external href"
+    },
+    {
+      "name": "modified/middle/right activation reaches the host: {\"ctrlKey\":true}"
+    },
+    {
+      "name": "modified/middle/right activation reaches the host: {\"metaKey\":true}"
+    },
+    {
+      "name": "modified/middle/right activation reaches the host: {\"shiftKey\":true}"
+    },
+    {
+      "name": "modified/middle/right activation reaches the host: {\"altKey\":true}"
+    },
+    {
+      "name": "modified/middle/right activation reaches the host: {\"button\":1}"
+    },
+    {
+      "name": "modified/middle/right activation reaches the host: {\"button\":2}"
+    },
+    {
+      "name": "native contextmenu keeps the external target without a geo jump",
+      "state": {
+        "href": "https://www.google.com/maps/search/?api=1&query=7.1,79.8",
+        "prevented": true
+      }
+    },
+    {
+      "name": "Google companion remains external"
+    },
+    {
+      "name": "actual Live Preview label click follows its source stop",
+      "state": {
+        "focus": "Beach",
+        "line": 3,
+        "pinned": -1,
+        "active": -1,
+        "markers": 4,
+        "maps": 1,
+        "mode": "source",
+        "external": 8,
+        "popup": true,
+        "narrow": false
+      }
+    },
+    {
+      "name": "actual Source mode label click follows its source stop",
+      "state": {
+        "focus": "Temple",
+        "line": 6,
+        "pinned": -1,
+        "active": -1,
+        "markers": 4,
+        "maps": 1,
+        "mode": "source",
+        "external": 8,
+        "popup": true,
+        "narrow": false
+      }
+    },
+    {
+      "name": "the explicit option persists through the existing settings store"
+    },
+    {
+      "name": "desktop clicks leave the note byte-identical"
+    },
+    {
+      "name": "mobile contextmenu/long-press event is not consumed by the feature"
+    },
+    {
+      "name": "touch/mobile branch opens one map on All at the tapped visit",
+      "state": {
+        "focus": "Hotel",
+        "line": 5,
+        "pinned": -1,
+        "active": -1,
+        "markers": 4,
+        "maps": 1,
+        "mode": "preview",
+        "external": 0,
+        "popup": true,
+        "narrow": true
+      }
+    },
+    {
+      "name": "mobile geo tap reveals the map tab"
+    },
+    {
+      "name": "a second mobile tap reuses the map tab",
+      "state": {
+        "focus": "Temple",
+        "line": 6,
+        "pinned": -1,
+        "active": -1,
+        "markers": 4,
+        "maps": 1,
+        "mode": "preview",
+        "external": 0,
+        "popup": true,
+        "narrow": true
+      }
+    },
+    {
+      "name": "touch clicks leave the note byte-identical"
+    },
+    {
+      "name": "no renderer errors during geo navigation",
+      "state": []
+    }
+  ],
+  "errors": [],
+  "scope": "Official desktop renderer with actual Reading/Live Preview/Source clicks and 412px touch emulation. Mobile Platform flag exercises map-tab behavior; contextmenu events test non-interception, not physical Android menus. No physical Android test."
+}
