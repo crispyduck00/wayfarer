@@ -31,6 +31,8 @@ export interface WayfarerSettings {
   addEmoji: boolean;
   /** The map flies to the stop on the cursor line. */
   followCursor: boolean;
+  /** Ordinary geo-link activation selects that source occurrence in Wayfarer. */
+  followGeoLinks: boolean;
   /** Raster tile URL template. */
   tileUrl: string;
   tileAttribution: string;
@@ -56,6 +58,7 @@ export const DEFAULT_SETTINGS: WayfarerSettings = {
   storeMetadata: true,
   addEmoji: true,
   followCursor: true,
+  followGeoLinks: false,
   tileUrl: DEFAULT_MAP_SOURCE.url,
   tileAttribution: DEFAULT_MAP_SOURCE.attribution,
   mapSources: [DEFAULT_MAP_SOURCE],
@@ -71,6 +74,7 @@ export function normalizeSettings(settings: WayfarerSettings): void {
 
 const GEO_DESC = "Save coordinates in a geo link and keep the original link beside it. Required while metadata storage is off. Applies to new conversions.";
 const METADATA_DESC = "Save Google details and routes in the note (default on). Turning this off enables geo conversion and keeps new details only for this session. Existing comments are left as written.";
+const FOLLOW_GEO_DESC = "Open geo links in Wayfarer on desktop and mobile. Modified clicks and native link menus keep their external target.";
 
 const GOOGLE_LANGUAGES: Record<string, string> = {
   auto: "Follow interface language", en: "English", "zh-TW": "繁體中文", "zh-CN": "简体中文",
@@ -120,6 +124,7 @@ export class WayfarerSettingTab extends PluginSettingTab {
       { name: "Google Maps link label", desc: GOOGLE_LABEL_DESC, control: { type: "text", key: "googleLinkLabel" } },
       { name: "Add an emoji to converted places", desc: "⛩️ 🍜 🏨 🚉 based on what the place is. An emoji you typed before the link is kept.", control: { type: "toggle", key: "addEmoji" } },
       { name: "Map follows the line you edit", control: { type: "toggle", key: "followCursor" } },
+      { name: "Follow geo link on map", desc: FOLLOW_GEO_DESC, control: { type: "toggle", key: "followGeoLinks" } },
       { name: "Open the map when a note has places", control: { type: "toggle", key: "autoOpen" } },
       {
         type: "group",
@@ -282,6 +287,11 @@ export class WayfarerSettingTab extends PluginSettingTab {
     new Setting(containerEl)
       .setName("Map follows the line you edit")
       .addToggle((t) => t.setValue(s.followCursor).onChange((v) => { s.followCursor = v; save(); }));
+
+    new Setting(containerEl)
+      .setName("Follow geo link on map")
+      .setDesc(FOLLOW_GEO_DESC)
+      .addToggle((t) => t.setValue(s.followGeoLinks).onChange((v) => { s.followGeoLinks = v; save(); }));
 
     new Setting(containerEl)
       .setName("Open the map when a note has places")

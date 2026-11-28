@@ -20,6 +20,8 @@ import { googleLanguageFor } from "./core/google-language";
 import { mapSourcesFrom, pickMapSource, type MapSource } from "./core/map-sources";
 import { PlaceDetailsCache, placeFacts } from "./place-details";
 import { pickCategory } from "./core/category";
+import { matchesGeoStop, type GeoLinkTarget } from "./core/geo-link-follow";
+import { geoLinkClicks } from "./ui/geo-link-follow";
 
 /**
  * Wayfarer: the note is the plan, the pane is the map.
@@ -137,9 +139,11 @@ export default class WayfarerPlugin extends Plugin {
     this.register(() => onEditorChange.cancel());
     this.registerEvent(this.app.metadataCache.on("changed", (file) => { if (file.path === this.current?.file.path) this.refresh(); }));
     const documents = new WeakSet<Document>();
+    const followGeoLink = geoLinkClicks(this);
     const trackDocument = (doc: Document) => {
       if (documents.has(doc)) return;
       documents.add(doc);
+      this.registerDomEvent(doc, "click", followGeoLink, true);
       this.registerDomEvent(doc, "selectionchange", () => this.trackCursor());
       this.registerDomEvent(doc, "keyup", () => this.trackCursor());
       this.registerDomEvent(doc, "mouseup", () => this.trackCursor());
@@ -179,6 +183,7 @@ export default class WayfarerPlugin extends Plugin {
     // Settings that no longer exist (photo cache, routing toggles) are dropped on the next save.
     const known = Object.fromEntries(Object.entries(data).filter(([k]) => k in DEFAULT_SETTINGS));
     this.settings = { ...DEFAULT_SETTINGS, ...known };
+    this.settings.followGeoLinks = data.followGeoLinks === true;
     normalizeSettings(this.settings);
     this.settings.mapSources = mapSourcesFrom(data.mapSources, data.tileUrl, data.tileAttribution);
     this.settings.defaultMapSource = pickMapSource(this.settings.mapSources, this.settings.defaultMapSource, null).id;
@@ -201,6 +206,41 @@ export default class WayfarerPlugin extends Plugin {
   }
 
   /* ---------- map pane ---------- */
+
+  private geoLinkRevision = 0;
+
+  /** Explicit source navigation also works when cursor following is unavailable on mobile. */
+  async followGeoLink(target: GeoLinkTarget): Promise<void> {
+    if (this.unloaded || !this.settings.followGeoLinks) return;
+    const revision = ++this.geoLinkRevision;
+    try {
+      const file = this.app.vault.getAbstractFileByPath(target.path);
+      if (!(file instanceof TFile)) return;
+      const editor = this.app.workspace.getLeavesOfType("markdown").map((l) => l.view)
+        .find((v): v is MarkdownView => v instanceof MarkdownView && v.file?.path === file.path && v.getMode() === "source");
+      const text = editor ? editor.editor.getValue() : await this.app.vault.cachedRead(file);
+      if (this.unloaded || !this.settings.followGeoLinks || revision !== this.geoLinkRevision) return;
+      const itinerary = this.parseNote(text);
+      if (![...itinerary.stops, ...itinerary.overview?.stops ?? []].some((s) => matchesGeoStop(s, target))) {
+        new Notice("This geo link is no longer part of the mapped plan.");
+        return;
+      }
+      let view = this.mapViews.find((v) => v.sourcePath === file.path) ?? this.mapViews[0];
+      const reset = !view || view.sourcePath !== file.path;
+      if (!view) {
+        await this.openMap();
+        view = this.mapViews[0];
+      }
+      if (!view || this.unloaded || !this.settings.followGeoLinks || revision !== this.geoLinkRevision) return;
+      this.current = { file, itinerary };
+      view.render(file, itinerary, -1);
+      if (Platform.isMobile) await this.app.workspace.revealLeaf(view.leaf);
+      if (this.unloaded || !this.settings.followGeoLinks || revision !== this.geoLinkRevision || view.sourcePath !== file.path) return;
+      view.focusSourceStop(target, reset);
+    } catch {
+      if (!this.unloaded && revision === this.geoLinkRevision) new Notice("Could not open this location on the map.");
+    }
+  }
 
   async openMap(): Promise<void> {
     const existing = this.mapLeaf();

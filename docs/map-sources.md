@@ -8,7 +8,8 @@ source is retained. Only the existing OpenStreetMap source is supplied by defaul
 The map's layers button switches backgrounds. It is hidden with one usable
 source. The position, itinerary layers, filters and open popup stay in place;
 zoom is clamped only if the selected source cannot support it. Sources are
-loaded on selection, not all at once.
+loaded on selection, not all at once. On narrow screens the layers button
+hides with the zoom buttons while a popup or the stop list is open.
 
 ![Source settings](images/map-sources-settings.png)
 ![Native Leaflet switcher](images/map-sources-switcher.png)

@@ -1598,6 +1598,8 @@
 }
 
 .wayfarer-view.is-narrow.is-list .leaflet-control-zoom,
+.wayfarer-view.is-narrow.is-list .leaflet-control-layers,
+.wayfarer-view.is-narrow.has-popup .leaflet-control-layers,
 .wayfarer-view.is-narrow.has-popup .leaflet-control-zoom { visibility: hidden; }
 
 .wayfarer-view.is-narrow .wf-journey {
