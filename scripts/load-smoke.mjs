@@ -30,7 +30,8 @@ const fakeEl = () => ({
 class Component {
   cleanups = [];
   register(cleanup) { this.cleanups.push(cleanup); }
-  registerEvent() {}
+  events = [];
+  registerEvent(ref) { this.events.push(ref); }
   domEvents = [];
   registerDomEvent(target, type, callback, options) { this.domEvents.push({ target, type, callback, options }); }
   registerInterval() {}
@@ -122,7 +123,7 @@ const PluginClass = mod.default ?? mod;
 
 const app = {
   workspace: {
-    on: () => ({}),
+    on: (name, callback) => ({ name, callback }),
     onLayoutReady: (cb) => cb(),
     getActiveViewOfType: () => null,
     getLeavesOfType: () => [],

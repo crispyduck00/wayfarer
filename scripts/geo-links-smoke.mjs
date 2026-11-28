@@ -31,18 +31,45 @@ export async function runGeoLinksSmoke({ plugin, app, md, files, openNote, getSo
     codemirrorViewStub.EditorView.findFromDOM = () => ({
       state: { field: () => ({ file: md.file }), doc: { toString: getSource, lineAt: () => ({ number: 4, from: text.lastIndexOf("- [Hotel]") }) } },
       posAtDOM: () => text.lastIndexOf("Hotel"),
+      posAtCoords: () => text.lastIndexOf("Hotel"),
     });
     selected = null; const sourceClick = event(sourceLink); click(sourceClick);
     assert(sourceClick.defaultPrevented && selected?.line === 3 && selected.path === "Geo.md", "editor click uses the public CodeMirror source position and file");
+    const touchHandlers = Object.fromEntries(plugin.domEvents.filter((e) => e.type.startsWith("touch") || e.type === "contextmenu").map((e) => [e.type, e.callback]));
+    const finger = { identifier: 7, clientX: 40, clientY: 50 };
+    const touch = (type, time, patch = {}) => event(sourceLink, { timeStamp: time, touches: type === "touchend" ? [] : [finger], changedTouches: [finger], ...patch });
+    selected = null;
+    touchHandlers.touchstart(touch("touchstart", 0));
+    const tap = touch("touchend", 100); touchHandlers.touchend(tap);
+    assert(tap.defaultPrevented && selected?.line === 3, "a short editor touch selects its geo link before the editor action");
+    for (const setup of [
+      () => touchHandlers.touchmove(touch("touchmove", 40, { touches: [{ ...finger, clientX: 70 }] })),
+      () => touchHandlers.touchstart(touch("touchstart", 40, { touches: [finger, { ...finger, identifier: 8 }] })),
+      () => touchHandlers.contextmenu(event(sourceLink)),
+      () => touchHandlers.touchcancel(event(sourceLink)),
+    ]) {
+      selected = null; touchHandlers.touchstart(touch("touchstart", 0)); setup();
+      const end = touch("touchend", 100); touchHandlers.touchend(end);
+      assert(!selected && !end.defaultPrevented, "scroll, multi-touch, context menu and cancelled touches keep native handling");
+    }
+    selected = null; touchHandlers.touchstart(touch("touchstart", 0));
+    const longPress = touch("touchend", 650); touchHandlers.touchend(longPress);
+    assert(!selected && !longPress.defaultPrevented, "a long editor press is not a Wayfarer jump");
+    selected = null; plugin.settings.followGeoLinks = false; touchHandlers.touchstart(touch("touchstart", 0));
+    const offTap = touch("touchend", 100); touchHandlers.touchend(offTap);
+    assert(!selected && !offTap.defaultPrevented, "disabled geo following leaves editor taps alone");
+    plugin.settings.followGeoLinks = true;
     codemirrorViewStub.EditorView.findFromDOM = () => null;
     plugin.followGeoLink = saved.follow;
 
-    let maps = [], opened = 0, revealed = 0;
+    let maps = [], opened = 0, revealed = 0, activated = 0, focusedMap = 0;
     app.workspace.getLeavesOfType = (type) => type === "markdown" ? [{ view: md }] : type === "wayfarer" ? maps.map((view) => ({ view })) : [];
     app.workspace.revealLeaf = async () => { revealed++; };
+    app.workspace.setActiveLeaf = () => { activated++; };
     app.vault = { ...saved.vault, getAbstractFileByPath: (path) => files.get(path), cachedRead: async () => getSource() };
     const view = plugin.views.wayfarer({}); view.app = app;
     view.map = { closePopup() {} };
+    view.mapEl = { focus() { focusedMap++; } };
     const flights = [];
     view.draw = () => {}; view.openPopup = () => {}; view.flyToStop = (stop) => flights.push(stop);
     view.render = (file, itinerary) => { view.file = file; view.itinerary = itinerary; view.sourceItinerary = itinerary; };
@@ -59,9 +86,9 @@ export async function runGeoLinksSmoke({ plugin, app, md, files, openNote, getSo
     plugin.openMap = async () => { opened++; maps = [view]; view.pinnedDay = 1; view.pinnedHeading = 2; };
     maps = []; obsidianStub.Platform.isMobile = true;
     await plugin.followGeoLink(second);
-    assert(opened === 1 && revealed === 1 && view.pinnedDay === -1 && view.focused.line === 3, "mobile opens one map on All and reveals the intended stop");
+    assert(opened === 1 && activated === 1 && focusedMap === 1 && revealed === 0 && view.pinnedDay === -1 && view.focused.line === 3, "mobile opens one map on All and reveals the intended stop");
     await plugin.followGeoLink(first);
-    assert(opened === 1 && revealed === 2, "mobile reuses its open map");
+    assert(opened === 1 && activated === 2 && focusedMap === 2 && revealed === 0, "mobile reuses its open map");
     obsidianStub.Platform.isMobile = false;
     md.getMode = () => "preview";
     const before = flights.length;
@@ -81,6 +108,23 @@ export async function runGeoLinksSmoke({ plugin, app, md, files, openNote, getSo
     const unloading = plugin.followGeoLink(first);
     plugin.unloaded = true; reads[3](text); await unloading; plugin.unloaded = false;
     assert(flights.length === before + 1 && getSource() === text, "unload cancels a pending jump and source text is unchanged");
+    const activeChanged = plugin.events.find(e => e.name === "active-leaf-change").callback;
+    const returning = plugin.followGeoLink(first);
+    activeChanged({ getViewState: () => ({ type: "markdown" }) });
+    reads[4](text); await returning;
+    assert(flights.length === before + 1, "returning to the note cancels a delayed link read");
+    const afterReads = reads.length;
+    md.getMode = () => "source";
+    obsidianStub.Platform.isMobile = true;
+    maps = [];
+    let finishOpening;
+    app.workspace.iterateAllLeaves = () => {};
+    app.workspace.getLeaf = () => ({ setViewState: () => new Promise(resolve => { finishOpening = resolve; }) });
+    plugin.openMap = saved.openMap;
+    const opening = plugin.followGeoLink(first);
+    activeChanged({ getViewState: () => ({ type: "markdown" }) });
+    finishOpening(); await opening;
+    assert(revealed === 0 && activated === 2 && reads.length === afterReads, "returning during map creation cancels the pending reveal");
   } finally {
     app.workspace = saved.workspace; app.vault = saved.vault; plugin.settings = saved.settings;
     md.getMode = saved.mode; plugin.followGeoLink = saved.follow; plugin.openMap = saved.openMap;

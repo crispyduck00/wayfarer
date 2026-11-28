@@ -82,6 +82,8 @@ export class WayfarerView extends ItemView {
     this.draw();
     this.flyToStop(stop);
     this.openPopup(stop);
+    // Complete the handoff so Obsidian does not keep the old note link as its focus.
+    if (Platform.isMobile) this.mapEl.focus({ preventScroll: true });
   }
 
   getViewType(): string {
