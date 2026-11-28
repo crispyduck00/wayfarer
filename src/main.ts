@@ -231,7 +231,7 @@ export default class WayfarerPlugin extends Plugin {
       let view = this.mapViews.find((v) => v.sourcePath === file.path) ?? this.mapViews[0];
       const reset = !view || view.sourcePath !== file.path;
       if (!view) {
-        await this.openMap(() => revision === this.geoLinkRevision && !this.unloaded);
+        await this.openMap(() => revision === this.geoLinkRevision && !this.unloaded && this.settings.followGeoLinks);
         view = this.mapViews[0];
       }
       if (!view || this.unloaded || !this.settings.followGeoLinks || revision !== this.geoLinkRevision) return;
