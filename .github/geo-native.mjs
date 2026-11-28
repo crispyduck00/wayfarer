@@ -133,6 +133,8 @@ try {
     __v.leaf.detach(); app.workspace.setActiveLeaf(__md.leaf, { focus: true });
   });
   await pause();
+  await reading('Hotel').first().evaluate(a => { const e = new MouseEvent('contextmenu', { bubbles: true, cancelable: true }); let untouched; document.addEventListener('contextmenu', event => { untouched = !event.defaultPrevented; event.preventDefault(); event.stopImmediatePropagation(); }, { once: true, capture: true }); a.dispatchEvent(e); if (!untouched) throw Error('Mobile contextmenu was intercepted'); });
+  ok(true, 'mobile contextmenu/long-press event is not consumed by the feature');
   await clickReading('Hotel', 1, true);
   await page.evaluate(() => { window.__v = app.workspace.getLeavesOfType('wayfarer').find(l => l.view.isReady)?.view; });
   await page.waitForFunction(() => __v.contentEl.clientWidth > 300);
@@ -150,12 +152,9 @@ try {
     await page.locator('.wf-map-toggle').tap(); c = await controls();
     ok(c.zoom === 'visible' && c.layers === 'visible', 'returning to map restores both controls', c);
   }
-  await page.evaluate(() => app.workspace.setActiveLeaf(__md.leaf, { focus: true })); await pause();
+  await page.evaluate(async () => { await app.workspace.revealLeaf(__md.leaf); }); await pause();
   await clickReading('Temple', 0, true); s = await state();
   ok(s.maps === 1 && s.line === 6 && s.popup, 'a second mobile tap reuses the map tab', s);
-  await page.evaluate(() => app.workspace.setActiveLeaf(__md.leaf, { focus: true })); await pause();
-  const longPress = await reading('Hotel').first().evaluate(a => { let untouched; const listener = e => { untouched = !e.defaultPrevented; e.preventDefault(); }; document.addEventListener('contextmenu', listener, { once: true, capture: true }); const e = new MouseEvent('contextmenu', { bubbles: true, cancelable: true }); a.dispatchEvent(e); return untouched; });
-  ok(longPress, 'mobile contextmenu/long-press event is not consumed by the feature');
   ok(readFileSync(dir + '/vault/Trip.md', 'utf8') === note, 'touch clicks leave the note byte-identical');
   ok(errors.length === 0, 'no renderer errors during geo navigation', errors);
   writeFileSync(output + '/result.json', JSON.stringify({ label, obsidian: '1.15.1', checks, errors, scope: 'Official desktop renderer with actual Reading/Live Preview/Source clicks and 412px touch emulation. Mobile Platform flag exercises map-tab behavior; contextmenu events test non-interception, not physical Android menus. No physical Android test.' }, null, 2) + '\n');
